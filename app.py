@@ -6,7 +6,12 @@ from datetime import datetime, timedelta
 # ==========================================
 # 1. ส่วนจัดการฐานข้อมูล (Database Management)
 # ==========================================
-DB_NAME = 'inventory_final.db'
+import os
+
+# หาที่อยู่ปัจจุบันของไฟล์โปรแกรม
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# สั่งให้สร้าง DB ในโฟลเดอร์เดียวกันนี้แหละ
+DB_NAME = os.path.join(BASE_DIR, 'inventory_final.db')
 
 def init_db():
     """สร้างฐานข้อมูลและตารางเก็บข้อมูลถ้ายังไม่มี"""

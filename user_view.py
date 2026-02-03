@@ -9,7 +9,12 @@ st.set_page_config(page_title="ตรวจสอบวัสดุ (Viewer)", l
 # ==========================================
 # 1. ฟังก์ชันโหลดและคำนวณ (เหมือนไฟล์ Admin)
 # ==========================================
-DB_NAME = 'inventory_final.db'
+import os
+
+# หาที่อยู่ปัจจุบันของไฟล์โปรแกรม
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# สั่งให้สร้าง DB ในโฟลเดอร์เดียวกันนี้แหละ
+DB_NAME = os.path.join(BASE_DIR, 'inventory_final.db')
 
 def load_data():
     """โหลดข้อมูลแบบ Real-time (ไม่ใช้ Cache)"""
