@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 
 # ==========================================
@@ -10,9 +10,14 @@ import time
 # ==========================================
 st.set_page_config(page_title="Inventory System", layout="wide")
 
-# ใช้ Absolute Path เพื่อความชัวร์บน Cloud
+# ใช้ Absolute Path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = os.path.join(BASE_DIR, 'inventory_final.db')
+
+# 🔥 ฟังก์ชันสำหรับดึงเวลาไทย (UTC+7) เสมอ
+def get_thai_now():
+    tz_thai = timezone(timedelta(hours=7))
+    return datetime.now(tz_thai)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -41,7 +46,8 @@ def save_to_db(df, action_type):
     conn = sqlite3.connect(DB_NAME)
     try:
         df['action_type'] = action_type
-        batch_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # 🔥 ใช้เวลาไทยในการบันทึก Timestamp
+        batch_timestamp = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
         df['upload_time'] = batch_timestamp
         
         for col in ['date', 'expiry_date']:
@@ -51,7 +57,7 @@ def save_to_db(df, action_type):
             df['item_code'] = df['item_code'].fillna('-')
 
         df.to_sql('transactions', conn, if_exists='append', index=False)
-        st.success(f"✅ บันทึกข้อมูล '{action_type}' เรียบร้อย!")
+        st.success(f"✅ บันทึกข้อมูล '{action_type}' เรียบร้อย! (เวลา: {batch_timestamp})")
         st.cache_data.clear()
     except Exception as e:
         st.error(f"❌ Error: {e}")
@@ -67,37 +73,21 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
-# --- ฟังก์ชันช่วยเติมข้อมูลที่ขาดหาย (Enrich Data) ---
 def enrich_transactions(df):
-    """
-    ฟังก์ชันนี้จะช่วยเติม Category ให้กับรายการ 'เบิกออก' 
-    โดยไปดูจากประวัติการ 'รับเข้า' ของสินค้ารหัสนั้นๆ
-    """
     if df.empty: return df
-    
-    # สร้าง Dictionary จับคู่ {รหัสสินค้า: ประเภทสินค้า} จากรายการที่มีข้อมูล
-    # โดยเลือกข้อมูลล่าสุดที่มี Category
     ref_df = df[df['category'].notna() & (df['category'] != '') & (df['category'] != '-')]
     if not ref_df.empty:
-        # เรียงวันที่ล่าสุดขึ้นก่อน แล้วตัดตัวซ้ำ เอาเฉพาะรหัสกับประเภท
         ref_map = ref_df.sort_values('date', ascending=False).drop_duplicates('item_code').set_index('item_code')['category']
-        
-        # เติมค่า Category ที่ว่าง ด้วยค่าจาก Reference Map
         df['category'] = df['category'].fillna(df['item_code'].map(ref_map))
-        
     return df
 
 def calculate_inventory(df):
     if df.empty: return pd.DataFrame()
     
-    # แปลง Type
     df['item_code'] = df['item_code'].astype(str)
     df['item_name'] = df['item_name'].astype(str)
     
-    # Group ยอด
     bal = df.pivot_table(index=['item_code','item_name'], columns='action_type', values='quantity', aggfunc='sum', fill_value=0).reset_index()
-    
-    # ดึงข้อมูลประกอบ
     latest = df.sort_values('date', ascending=False).drop_duplicates(['item_code','item_name'])
     
     cats = df[(df['category'].notna()) & (~df['category'].isin(['','-','None']))]
@@ -110,7 +100,6 @@ def calculate_inventory(df):
         min_exp = exps.groupby(['item_code','item_name'])['expiry_date'].min().reset_index()
     else: min_exp = pd.DataFrame(columns=['item_code','item_name','expiry_date'])
 
-    # Merge
     bal = bal.merge(latest[['item_code','item_name','unit']], on=['item_code','item_name'], how='left')
     bal = bal.merge(best_cat, on=['item_code','item_name'], how='left')
     bal = bal.merge(min_exp, on=['item_code','item_name'], how='left')
@@ -143,7 +132,7 @@ def delete_batch(batch):
 # ==========================================
 init_db()
 
-# --- ส่วน Sidebar (เลือกบทบาท) ---
+# --- Sidebar ---
 st.sidebar.title("🔐 เข้าสู่ระบบ")
 role = st.sidebar.radio("เลือกสิทธิ์การใช้งาน:", ["👤 User (ทั่วไป)", "🔑 Admin (ผู้ดูแล)"])
 
@@ -151,13 +140,12 @@ is_admin = False
 if role == "🔑 Admin (ผู้ดูแล)":
     st.sidebar.markdown("---")
     password = st.sidebar.text_input("รหัสผ่าน Admin:", type="password")
-    if password == "1111100000":  # <--- แก้รหัสผ่านตรงนี้
+    if password == "1111100000":
         is_admin = True
         st.sidebar.success("ล็อกอินสำเร็จ! ✅")
     elif password:
         st.sidebar.error("รหัสผิด ❌")
 
-# กำหนดเมนู
 if is_admin:
     menu_options = [
         "📊 Dashboard & แจ้งเตือน", 
@@ -192,8 +180,10 @@ if choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
     st.header("📊 Dashboard ภาพรวมสต็อก")
     if not balance_df.empty:
         st.subheader("⚠️ แจ้งเตือนวันหมดอายุ")
-        today = datetime.now().strftime('%Y-%m-%d')
-        next_30 = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+        
+        # 🔥 ใช้เวลาไทยในการเปรียบเทียบวันหมดอายุ
+        today = get_thai_now().strftime('%Y-%m-%d')
+        next_30 = (get_thai_now() + timedelta(days=30)).strftime('%Y-%m-%d')
         
         has_exp = balance_df[balance_df['expiry_date'].notna() & (balance_df['Balance']>0)]
         expired = has_exp[has_exp['expiry_date'] < today]
@@ -215,7 +205,8 @@ if choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 รายการทั้งหมด", len(balance_df))
         c2.metric("⚠️ สินค้าหมด", len(balance_df[balance_df['Balance']<=0]))
-        c3.metric("📅 อัปเดต", datetime.now().strftime("%H:%M"))
+        # 🔥 แสดงเวลาไทย
+        c3.metric("📅 อัปเดต (เวลาไทย)", get_thai_now().strftime("%H:%M:%S"))
     else:
         st.info("ยังไม่มีข้อมูล กรุณาไปเมนู 'รับเข้า' เพื่ออัปโหลดไฟล์")
 
@@ -274,18 +265,18 @@ elif choice == "🔍 ค้นหา (Search)":
             else: st.warning("ไม่พบข้อมูล")
     else: st.info("ไม่มีข้อมูล")
 
-# --- 4. รายงานประจำวัน (Fixed Columns & Enriched Data) ---
+# --- 4. รายงานประจำวัน (Daily) ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
     st.header("📅 รายงานประจำวัน")
     if not df.empty:
-        # 1. เติมข้อมูล Category ที่หายไป
         enriched_df = enrich_transactions(df.copy())
         
         mode = st.radio("โหมด:", ["รายวัน", "ทั้งหมด"], horizontal=True)
         show_df = enriched_df.copy()
         
         if mode == "รายวัน":
-            date = st.date_input("เลือกวันที่:", datetime.now()).strftime('%Y-%m-%d')
+            # 🔥 ใช้วันที่ปัจจุบันแบบไทย (UTC+7)
+            date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
             show_df = show_df[show_df['date'] == date]
             
         if not show_df.empty:
@@ -294,37 +285,15 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
             
             t1, t2 = st.tabs(["📥 รับเข้า (In)", "📤 เบิกออก (Out)"])
             
-            # กำหนดคอลัมน์ที่จะแสดงให้ครบถ้วน
             cols_in = ['date', 'item_code', 'item_name', 'quantity', 'unit', 'category', 'expiry_date', 'remark']
             cols_out = ['date', 'item_code', 'item_name', 'quantity', 'unit', 'category', 'department', 'requester', 'remark']
             
             with t1: 
-                # แสดงตารางรับเข้า
-                st.dataframe(
-                    show_df[show_df['action_type']=='In'][cols_in], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "date": st.column_config.DateColumn("วันที่"),
-                        "expiry_date": st.column_config.DateColumn("วันหมดอายุ"),
-                        "item_name": "ชื่อรายการ",
-                        "category": "ประเภท"
-                    }
-                )
+                st.dataframe(show_df[show_df['action_type']=='In'][cols_in], use_container_width=True, hide_index=True,
+                    column_config={"date": st.column_config.DateColumn("วันที่"), "expiry_date": st.column_config.DateColumn("วันหมดอายุ")})
             with t2: 
-                # แสดงตารางเบิกออก (มีแผนก, ผู้เบิก)
-                st.dataframe(
-                    show_df[show_df['action_type']=='Out'][cols_out], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "date": st.column_config.DateColumn("วันที่"),
-                        "item_name": "ชื่อรายการ",
-                        "category": "ประเภท",
-                        "department": "แผนก",
-                        "requester": "ผู้เบิก"
-                    }
-                )
+                st.dataframe(show_df[show_df['action_type']=='Out'][cols_out], use_container_width=True, hide_index=True,
+                    column_config={"date": st.column_config.DateColumn("วันที่")})
         else: st.warning("ไม่มีรายการในช่วงเวลานี้")
 
 # --- 5. รับเข้า (Admin Only) ---
@@ -366,7 +335,7 @@ elif choice == "🔧 จัดการข้อมูล" and is_admin:
         t1, t2 = st.tabs(["Undo (ลบทั้งรอบ)", "ลบรายบรรทัด"])
         with t1:
             times = df['upload_time'].unique() if 'upload_time' in df.columns else []
-            sel = st.selectbox("เลือกรอบเวลา:", times)
+            sel = st.selectbox("เลือกรอบเวลา (เวลาไทย):", times)
             if st.button("ลบทั้งรอบนี้"): delete_batch(sel); st.rerun()
         with t2:
             st.dataframe(df)
