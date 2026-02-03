@@ -67,6 +67,26 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
+# --- ฟังก์ชันช่วยเติมข้อมูลที่ขาดหาย (Enrich Data) ---
+def enrich_transactions(df):
+    """
+    ฟังก์ชันนี้จะช่วยเติม Category ให้กับรายการ 'เบิกออก' 
+    โดยไปดูจากประวัติการ 'รับเข้า' ของสินค้ารหัสนั้นๆ
+    """
+    if df.empty: return df
+    
+    # สร้าง Dictionary จับคู่ {รหัสสินค้า: ประเภทสินค้า} จากรายการที่มีข้อมูล
+    # โดยเลือกข้อมูลล่าสุดที่มี Category
+    ref_df = df[df['category'].notna() & (df['category'] != '') & (df['category'] != '-')]
+    if not ref_df.empty:
+        # เรียงวันที่ล่าสุดขึ้นก่อน แล้วตัดตัวซ้ำ เอาเฉพาะรหัสกับประเภท
+        ref_map = ref_df.sort_values('date', ascending=False).drop_duplicates('item_code').set_index('item_code')['category']
+        
+        # เติมค่า Category ที่ว่าง ด้วยค่าจาก Reference Map
+        df['category'] = df['category'].fillna(df['item_code'].map(ref_map))
+        
+    return df
+
 def calculate_inventory(df):
     if df.empty: return pd.DataFrame()
     
@@ -77,7 +97,7 @@ def calculate_inventory(df):
     # Group ยอด
     bal = df.pivot_table(index=['item_code','item_name'], columns='action_type', values='quantity', aggfunc='sum', fill_value=0).reset_index()
     
-    # ดึงข้อมูลประกอบ (Unit, Category, Expiry)
+    # ดึงข้อมูลประกอบ
     latest = df.sort_values('date', ascending=False).drop_duplicates(['item_code','item_name'])
     
     cats = df[(df['category'].notna()) & (~df['category'].isin(['','-','None']))]
@@ -127,9 +147,7 @@ init_db()
 st.sidebar.title("🔐 เข้าสู่ระบบ")
 role = st.sidebar.radio("เลือกสิทธิ์การใช้งาน:", ["👤 User (ทั่วไป)", "🔑 Admin (ผู้ดูแล)"])
 
-# ตัวแปรเก็บสถานะการล็อกอิน Admin
 is_admin = False
-
 if role == "🔑 Admin (ผู้ดูแล)":
     st.sidebar.markdown("---")
     password = st.sidebar.text_input("รหัสผ่าน Admin:", type="password")
@@ -139,12 +157,8 @@ if role == "🔑 Admin (ผู้ดูแล)":
     elif password:
         st.sidebar.error("รหัสผิด ❌")
 
-# ==========================================
-# 3. กำหนดเมนูตามสิทธิ์ (Role)
-# ==========================================
-
+# กำหนดเมนู
 if is_admin:
-    # เมนูสำหรับ Admin (ครบทุกอย่าง)
     menu_options = [
         "📊 Dashboard & แจ้งเตือน", 
         "📋 วัสดุทั้งหมด (Overview)",
@@ -155,19 +169,14 @@ if is_admin:
         "🔧 จัดการข้อมูล"
     ]
 else:
-    # เมนูสำหรับ User (ดูได้อย่างเดียว)
-    menu_options = [
-        "📋 วัสดุทั้งหมด (Overview)",
-        "🔍 ค้นหา (Search)"
-    ]
+    menu_options = ["📋 วัสดุทั้งหมด (Overview)", "🔍 ค้นหา (Search)"]
 
-# แสดงเมนูที่เลือกได้
 st.sidebar.markdown("---")
 choice = st.sidebar.radio("เมนู:", menu_options)
 st.sidebar.markdown("---")
 if st.sidebar.button("🔄 รีเฟรชข้อมูล"): st.rerun()
 
-# โหลดข้อมูลเตรียมไว้
+# โหลดข้อมูล
 df = load_data()
 if not df.empty:
     balance_df = calculate_inventory(df)
@@ -175,14 +184,13 @@ else:
     balance_df = pd.DataFrame()
 
 # ==========================================
-# 4. ส่วนแสดงผลเนื้อหา (Content)
+# 3. ส่วนแสดงผลเนื้อหา (Content)
 # ==========================================
 
 # --- 1. Dashboard (Admin Only) ---
 if choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
     st.header("📊 Dashboard ภาพรวมสต็อก")
     if not balance_df.empty:
-        # Expiry Alert
         st.subheader("⚠️ แจ้งเตือนวันหมดอายุ")
         today = datetime.now().strftime('%Y-%m-%d')
         next_30 = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
@@ -204,7 +212,6 @@ if choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
             else: st.success("✅ ไม่มีของใกล้หมดอายุ")
             
         st.markdown("---")
-        # KPI Cards
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 รายการทั้งหมด", len(balance_df))
         c2.metric("⚠️ สินค้าหมด", len(balance_df[balance_df['Balance']<=0]))
@@ -249,16 +256,13 @@ elif choice == "🔍 ค้นหา (Search)":
         if txt:
             res = df[df.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
             if not res.empty:
-                # ถ้าเป็น Admin ให้เห็นตารางละเอียด, User เห็นแค่การ์ดสรุป
                 if is_admin:
                     in_sum = res[res['action_type']=='In']['quantity'].sum()
                     out_sum = res[res['action_type']=='Out']['quantity'].sum()
                     st.markdown(f"**สรุป:** รับ {in_sum:,.2f} | จ่าย {out_sum:,.2f} | คงเหลือ {in_sum-out_sum:,.2f}")
                     st.dataframe(res[['date','action_type','item_name','quantity','department','requester','remark']], use_container_width=True, hide_index=True)
                 else:
-                    # User View (Card Style)
-                    # คำนวณหายอดคงเหลือรายตัวจากผลลัพธ์ที่เจอ
-                    summary = calculate_inventory(res) # ใช้ฟังก์ชันคำนวณซ้ำเฉพาะกลุ่มนี้
+                    summary = calculate_inventory(res)
                     for i, r in summary.iterrows():
                          with st.container():
                             c1, c2, c3, c4 = st.columns([2,1,1,1])
@@ -270,23 +274,58 @@ elif choice == "🔍 ค้นหา (Search)":
             else: st.warning("ไม่พบข้อมูล")
     else: st.info("ไม่มีข้อมูล")
 
-# --- 4. รายงานประจำวัน (Admin Only) ---
+# --- 4. รายงานประจำวัน (Fixed Columns & Enriched Data) ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
     st.header("📅 รายงานประจำวัน")
     if not df.empty:
+        # 1. เติมข้อมูล Category ที่หายไป
+        enriched_df = enrich_transactions(df.copy())
+        
         mode = st.radio("โหมด:", ["รายวัน", "ทั้งหมด"], horizontal=True)
-        show_df = df.copy()
+        show_df = enriched_df.copy()
+        
         if mode == "รายวัน":
             date = st.date_input("เลือกวันที่:", datetime.now()).strftime('%Y-%m-%d')
-            show_df = df[df['date'] == date]
+            show_df = show_df[show_df['date'] == date]
             
         if not show_df.empty:
             csv = show_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 ดาวน์โหลด (CSV)", csv, "daily_report.csv", "text/csv")
-            t1, t2 = st.tabs(["📥 รับเข้า", "📤 เบิกออก"])
-            with t1: st.dataframe(show_df[show_df['action_type']=='In'], use_container_width=True, hide_index=True)
-            with t2: st.dataframe(show_df[show_df['action_type']=='Out'], use_container_width=True, hide_index=True)
-        else: st.warning("ไม่มีรายการ")
+            
+            t1, t2 = st.tabs(["📥 รับเข้า (In)", "📤 เบิกออก (Out)"])
+            
+            # กำหนดคอลัมน์ที่จะแสดงให้ครบถ้วน
+            cols_in = ['date', 'item_code', 'item_name', 'quantity', 'unit', 'category', 'expiry_date', 'remark']
+            cols_out = ['date', 'item_code', 'item_name', 'quantity', 'unit', 'category', 'department', 'requester', 'remark']
+            
+            with t1: 
+                # แสดงตารางรับเข้า
+                st.dataframe(
+                    show_df[show_df['action_type']=='In'][cols_in], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "date": st.column_config.DateColumn("วันที่"),
+                        "expiry_date": st.column_config.DateColumn("วันหมดอายุ"),
+                        "item_name": "ชื่อรายการ",
+                        "category": "ประเภท"
+                    }
+                )
+            with t2: 
+                # แสดงตารางเบิกออก (มีแผนก, ผู้เบิก)
+                st.dataframe(
+                    show_df[show_df['action_type']=='Out'][cols_out], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "date": st.column_config.DateColumn("วันที่"),
+                        "item_name": "ชื่อรายการ",
+                        "category": "ประเภท",
+                        "department": "แผนก",
+                        "requester": "ผู้เบิก"
+                    }
+                )
+        else: st.warning("ไม่มีรายการในช่วงเวลานี้")
 
 # --- 5. รับเข้า (Admin Only) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
