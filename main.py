@@ -134,15 +134,18 @@ init_db()
 
 # --- Sidebar ---
 st.sidebar.title("🔐 เข้าสู่ระบบ")
-role = st.sidebar.radio("เลือกสิทธิ์การใช้งาน:", ["👤 User (ทั่วไป)", "🔑 Admin (ผู้ดูแล)"])
+
+# 1. เปลี่ยนชื่อ Role ตามที่ขอ
+role = st.sidebar.radio("เลือกแผนกที่ใช้งาน:", ["👤 Other Department", "🔑 Material Control Department"])
 
 is_admin = False
-if role == "🔑 Admin (ผู้ดูแล)":
+# 2. เช็คสิทธิ์ Admin (Material Control)
+if role == "🔑 Material Control Department":
     st.sidebar.markdown("---")
-    password = st.sidebar.text_input("รหัสผ่าน Admin:", type="password")
+    password = st.sidebar.text_input("รหัสผ่านแผนก:", type="password")
     if password == "1111100000":
         is_admin = True
-        st.sidebar.success("ล็อกอินสำเร็จ! ✅")
+        st.sidebar.success("ยืนยันตัวตนสำเร็จ ✅")
     elif password:
         st.sidebar.error("รหัสผิด ❌")
 
@@ -175,13 +178,12 @@ else:
 # 3. ส่วนแสดงผลเนื้อหา (Content)
 # ==========================================
 
-# --- 1. Dashboard (Admin Only) ---
+# --- 1. Dashboard (Material Control Only) ---
 if choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
     st.header("📊 Dashboard ภาพรวมสต็อก")
     if not balance_df.empty:
         st.subheader("⚠️ แจ้งเตือนวันหมดอายุ")
         
-        # 🔥 ใช้เวลาไทยในการเปรียบเทียบวันหมดอายุ
         today = get_thai_now().strftime('%Y-%m-%d')
         next_30 = (get_thai_now() + timedelta(days=30)).strftime('%Y-%m-%d')
         
@@ -205,12 +207,11 @@ if choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 รายการทั้งหมด", len(balance_df))
         c2.metric("⚠️ สินค้าหมด", len(balance_df[balance_df['Balance']<=0]))
-        # 🔥 แสดงเวลาไทย
         c3.metric("📅 อัปเดต (เวลาไทย)", get_thai_now().strftime("%H:%M:%S"))
     else:
         st.info("ยังไม่มีข้อมูล กรุณาไปเมนู 'รับเข้า' เพื่ออัปโหลดไฟล์")
 
-# --- 2. วัสดุทั้งหมด (Admin + User) ---
+# --- 2. วัสดุทั้งหมด (Both Roles) ---
 elif choice == "📋 วัสดุทั้งหมด (Overview)":
     st.header("📋 รายการวัสดุคงเหลือทั้งหมด")
     if not balance_df.empty:
@@ -224,8 +225,13 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
         if sel != "ทั้งหมด": show = show[show['category']==sel]
         if txt: show = show[show.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
         
-        csv = show.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 ดาวน์โหลด (CSV)", csv, "stock_overview.csv", "text/csv")
+        # 🔥 ป้องกันการดาวน์โหลด: ปุ่มนี้จะโชว์เฉพาะ Material Control (Admin) เท่านั้น
+        if is_admin:
+            csv = show.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 ดาวน์โหลด (CSV)", csv, "stock_overview.csv", "text/csv", type="primary")
+        else:
+            # แจ้งเตือน Other Department ว่าไม่มีสิทธิ์โหลด (หรือจะไม่แสดงอะไรเลยก็ได้)
+            st.caption("ℹ️ เฉพาะ Material Control Department เท่านั้นที่สามารถดาวน์โหลดข้อมูลได้")
         
         st.dataframe(
             show[['item_code','item_name','category','In','Out','Balance','unit','expiry_date']],
@@ -239,7 +245,7 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
         )
     else: st.info("ไม่มีข้อมูล")
 
-# --- 3. ค้นหา (Admin + User) ---
+# --- 3. ค้นหา (Both Roles) ---
 elif choice == "🔍 ค้นหา (Search)":
     st.header("🔍 ค้นหาประวัติรายตัว")
     if not df.empty:
@@ -265,7 +271,7 @@ elif choice == "🔍 ค้นหา (Search)":
             else: st.warning("ไม่พบข้อมูล")
     else: st.info("ไม่มีข้อมูล")
 
-# --- 4. รายงานประจำวัน (Daily) ---
+# --- 4. รายงานประจำวัน (Material Control Only) ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
     st.header("📅 รายงานประจำวัน")
     if not df.empty:
@@ -275,7 +281,6 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
         show_df = enriched_df.copy()
         
         if mode == "รายวัน":
-            # 🔥 ใช้วันที่ปัจจุบันแบบไทย (UTC+7)
             date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
             show_df = show_df[show_df['date'] == date]
             
@@ -296,7 +301,7 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
                     column_config={"date": st.column_config.DateColumn("วันที่")})
         else: st.warning("ไม่มีรายการในช่วงเวลานี้")
 
-# --- 5. รับเข้า (Admin Only) ---
+# --- 5. รับเข้า (Material Control Only) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
     st.header("📥 รับวัสดุเข้า")
     f = st.file_uploader("Upload Excel (In)", type=['xlsx'], key='in')
@@ -312,7 +317,7 @@ elif choice == "📥 รับเข้า (In)" and is_admin:
                 if c not in d.columns: d[c] = None
             save_to_db(d[req], 'In')
 
-# --- 6. เบิกออก (Admin Only) ---
+# --- 6. เบิกออก (Material Control Only) ---
 elif choice == "📤 เบิกออก (Out)" and is_admin:
     st.header("📤 เบิกวัสดุออก")
     f = st.file_uploader("Upload Excel (Out)", type=['xlsx'], key='out')
@@ -328,7 +333,7 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
                 if c not in d.columns: d[c] = None
             save_to_db(d[req], 'Out')
 
-# --- 7. จัดการข้อมูล (Admin Only) ---
+# --- 7. จัดการข้อมูล (Material Control Only) ---
 elif choice == "🔧 จัดการข้อมูล" and is_admin:
     st.header("🔧 จัดการข้อมูล")
     if not df.empty:
