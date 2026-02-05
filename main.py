@@ -134,12 +134,9 @@ init_db()
 
 # --- Sidebar ---
 st.sidebar.title("🔐 เข้าสู่ระบบ")
-
-# 1. เปลี่ยนชื่อ Role ตามที่ขอ
 role = st.sidebar.radio("เลือกแผนกที่ใช้งาน:", ["👤 Other Department", "🔑 Material Control Department"])
 
 is_admin = False
-# 2. เช็คสิทธิ์ Admin (Material Control)
 if role == "🔑 Material Control Department":
     st.sidebar.markdown("---")
     password = st.sidebar.text_input("รหัสผ่านแผนก:", type="password")
@@ -149,10 +146,12 @@ if role == "🔑 Material Control Department":
     elif password:
         st.sidebar.error("รหัสผิด ❌")
 
+# --- เมนู (เพิ่มเมนู 'วัสดุหมดสต๊อก') ---
 if is_admin:
     menu_options = [
         "📊 Dashboard & แจ้งเตือน", 
         "📋 วัสดุทั้งหมด (Overview)",
+        "📉 วัสดุหมดสต๊อก (Out of Stock)", # <--- เมนูใหม่
         "🔍 ค้นหา (Search)",   
         "📅 รายงานประจำวัน (Daily)", 
         "📥 รับเข้า (In)", 
@@ -160,7 +159,11 @@ if is_admin:
         "🔧 จัดการข้อมูล"
     ]
 else:
-    menu_options = ["📋 วัสดุทั้งหมด (Overview)", "🔍 ค้นหา (Search)"]
+    menu_options = [
+        "📋 วัสดุทั้งหมด (Overview)", 
+        "📉 วัสดุหมดสต๊อก (Out of Stock)", # <--- เมนูใหม่
+        "🔍 ค้นหา (Search)"
+    ]
 
 st.sidebar.markdown("---")
 choice = st.sidebar.radio("เมนู:", menu_options)
@@ -225,12 +228,10 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
         if sel != "ทั้งหมด": show = show[show['category']==sel]
         if txt: show = show[show.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
         
-        # 🔥 ป้องกันการดาวน์โหลด: ปุ่มนี้จะโชว์เฉพาะ Material Control (Admin) เท่านั้น
         if is_admin:
             csv = show.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 ดาวน์โหลด (CSV)", csv, "stock_overview.csv", "text/csv", type="primary")
         else:
-            # แจ้งเตือน Other Department ว่าไม่มีสิทธิ์โหลด (หรือจะไม่แสดงอะไรเลยก็ได้)
             st.caption("ℹ️ เฉพาะ Material Control Department เท่านั้นที่สามารถดาวน์โหลดข้อมูลได้")
         
         st.dataframe(
@@ -245,11 +246,49 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
         )
     else: st.info("ไม่มีข้อมูล")
 
-# --- 3. ค้นหา (Both Roles) ---
+# --- 3. [NEW] วัสดุหมดสต๊อก (Both Roles) ---
+elif choice == "📉 วัสดุหมดสต๊อก (Out of Stock)":
+    st.header("📉 รายงานวัสดุที่ถูกเบิกจ่ายหมดแล้ว (Balance ≤ 0)")
+    if not balance_df.empty:
+        # กรองเอาเฉพาะตัวที่ Balance <= 0
+        out_of_stock_df = balance_df[balance_df['Balance'] <= 0].copy()
+        
+        if not out_of_stock_df.empty:
+            c1, c2 = st.columns([2,1])
+            with c1: txt = st.text_input("🔍 ค้นหาในรายการหมด:", placeholder="ชื่อ หรือ รหัส...")
+            with c2: 
+                cats = ["ทั้งหมด"] + sorted([c for c in out_of_stock_df['category'].unique() if c!='-'])
+                sel = st.selectbox("หมวดหมู่สินค้าหมด:", cats)
+                
+            show = out_of_stock_df
+            if sel != "ทั้งหมด": show = show[show['category']==sel]
+            if txt: show = show[show.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
+
+            # ปุ่มดาวน์โหลด (เฉพาะ Admin)
+            if is_admin:
+                csv = show.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 ดาวน์โหลดรายการของหมด (CSV)", csv, "out_of_stock_report.csv", "text/csv", type="primary")
+            
+            st.error(f"พบรายการวัสดุหมดสต๊อกจำนวน: {len(show)} รายการ")
+            st.dataframe(
+                show[['item_code','item_name','category','In','Out','Balance','unit']],
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "Balance": st.column_config.NumberColumn("คงเหลือ", format="%.2f"),
+                    "In": st.column_config.NumberColumn("รับรวม", format="%.2f"),
+                    "Out": st.column_config.NumberColumn("จ่ายรวม", format="%.2f")
+                }
+            )
+        else:
+            st.success("✅ เยี่ยมมาก! ไม่มีรายการวัสดุหมดสต๊อกในขณะนี้")
+    else:
+        st.info("ไม่มีข้อมูล")
+
+# --- 4. ค้นหา (Both Roles) ---
 elif choice == "🔍 ค้นหา (Search)":
     st.header("🔍 ค้นหาประวัติรายตัว")
     if not df.empty:
-        txt = st.text_input("พิมพ์รหัส/ชื่อ:")
+        txt = st.text_input("พิมพ์รหัส/ชื่อ:", key="search_history")
         if txt:
             res = df[df.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
             if not res.empty:
@@ -271,7 +310,7 @@ elif choice == "🔍 ค้นหา (Search)":
             else: st.warning("ไม่พบข้อมูล")
     else: st.info("ไม่มีข้อมูล")
 
-# --- 4. รายงานประจำวัน (Material Control Only) ---
+# --- 5. รายงานประจำวัน (Material Control Only) ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
     st.header("📅 รายงานประจำวัน")
     if not df.empty:
@@ -301,7 +340,7 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
                     column_config={"date": st.column_config.DateColumn("วันที่")})
         else: st.warning("ไม่มีรายการในช่วงเวลานี้")
 
-# --- 5. รับเข้า (Material Control Only) ---
+# --- 6. รับเข้า (Material Control Only) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
     st.header("📥 รับวัสดุเข้า")
     f = st.file_uploader("Upload Excel (In)", type=['xlsx'], key='in')
@@ -317,7 +356,7 @@ elif choice == "📥 รับเข้า (In)" and is_admin:
                 if c not in d.columns: d[c] = None
             save_to_db(d[req], 'In')
 
-# --- 6. เบิกออก (Material Control Only) ---
+# --- 7. เบิกออก (Material Control Only) ---
 elif choice == "📤 เบิกออก (Out)" and is_admin:
     st.header("📤 เบิกวัสดุออก")
     f = st.file_uploader("Upload Excel (Out)", type=['xlsx'], key='out')
@@ -333,7 +372,7 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
                 if c not in d.columns: d[c] = None
             save_to_db(d[req], 'Out')
 
-# --- 7. จัดการข้อมูล (Material Control Only) ---
+# --- 8. จัดการข้อมูล (Material Control Only) ---
 elif choice == "🔧 จัดการข้อมูล" and is_admin:
     st.header("🔧 จัดการข้อมูล")
     if not df.empty:
