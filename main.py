@@ -173,7 +173,7 @@ is_admin = False
 if role == "🔑 Material Control Department":
     st.sidebar.markdown("---")
     password = st.sidebar.text_input("รหัสผ่านแผนก:", type="password")
-    if password == "1234":
+    if password == "1111100000":
         is_admin = True
         st.sidebar.success("ยืนยันตัวตนสำเร็จ ✅")
     elif password: st.sidebar.error("รหัสผิด ❌")
