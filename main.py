@@ -13,7 +13,7 @@ st.set_page_config(page_title="Inventory & Chemical System", layout="wide")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = os.path.join(BASE_DIR, 'inventory_final.db')
 
-# 🔥 ค่าคงที่สำหรับสารเคมี (Config)
+# 🔥 ค่าคงที่สำหรับสารเคมี (Chemical Config)
 CHEMICAL_CONFIG = {
     "NaOH":   {"capacity": 60000, "limit": 48000, "density": 1.52, "name": "Sodium Hydroxide (โซดาไฟ 50%)"},
     "H2SO4":  {"capacity": 60000, "limit": 48000, "density": 1.84, "name": "Sulfuric Acid (กรดซัลฟิวริก 98%)"},
@@ -46,7 +46,7 @@ def init_db():
             upload_time TEXT 
         )
     ''')
-    # ตารางสารเคมี (แยกใหม่)
+    # ตารางสารเคมี
     c.execute('''
         CREATE TABLE IF NOT EXISTS chemical_transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,7 +182,7 @@ if role == "🔑 Material Control Department":
 if is_admin:
     menu_options = [
         "📊 Dashboard & แจ้งเตือน", 
-        "🧪 ระบบจัดการสารเคมี (Chemical Tanks)",  # <--- เมนูใหม่
+        "🧪 ระบบจัดการสารเคมี (Chemical Tanks)", 
         "📋 วัสดุทั้งหมด (Overview)",
         "📉 วัสดุหมดสต๊อก (Out of Stock)",
         "🔍 ค้นหา (Search)",   
@@ -193,7 +193,7 @@ if is_admin:
     ]
 else:
     menu_options = [
-        "🧪 ระบบจัดการสารเคมี (Chemical Tanks)",  # <--- เมนูใหม่
+        "🧪 ระบบจัดการสารเคมี (Chemical Tanks)", 
         "📋 วัสดุทั้งหมด (Overview)", 
         "📉 วัสดุหมดสต๊อก (Out of Stock)",
         "🔍 ค้นหา (Search)"
@@ -220,10 +220,11 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
     chem_df = load_chem_data()
     chem_bal = calculate_chem_balance(chem_df)
     
-    # 2. แสดง Dashboard ถังเก็บ (Card View)
+    # 2. แสดง Dashboard ถังเก็บ (เห็นได้ทั้ง User และ Admin)
     st.subheader("📊 สถานะถังเก็บปัจจุบัน (Tank Status)")
-    cols = st.columns(4)
+    st.info("💡 แสดงปริมาณคงเหลือในถัง (Real-time)")
     
+    cols = st.columns(4)
     for i, (code, conf) in enumerate(CHEMICAL_CONFIG.items()):
         current_kg = chem_bal.get(code, 0)
         current_l = current_kg / conf['density']
@@ -233,8 +234,8 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
             st.markdown(f"#### {code}")
             st.caption(conf['name'])
             
-            # Progress Bar (เทียบกับ Limit การเติม)
-            safe_pct = min(percent/100, 1.0)
+            # Progress Bar
+            safe_pct = max(0.0, min(percent/100, 1.0))
             if current_kg > conf['limit']:
                 st.progress(safe_pct, text="⚠️ OVER LIMIT")
             elif current_kg > conf['limit'] * 0.9:
@@ -242,90 +243,89 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
             else:
                 st.progress(safe_pct, text="🟢 Normal")
                 
-            st.metric("ปริมาณคงเหลือ", f"{current_kg:,.0f} KG", f"{current_l:,.0f} L")
+            st.metric("คงเหลือ (KG)", f"{current_kg:,.0f} KG")
+            st.metric("คงเหลือ (Liters)", f"{current_l:,.0f} L")
             st.caption(f"Max Limit: {conf['limit']:,} KG")
             st.divider()
 
-    # 3. ส่วนบันทึก รับเข้า/เบิกออก (Admin Only)
+    # 3. ส่วนบันทึกและประวัติ (เฉพาะ Admin เท่านั้นที่เห็น)
     if is_admin:
-        st.subheader("📝 บันทึกรายการ (Transaction)")
-        with st.form("chem_form"):
-            c1, c2, c3 = st.columns(3)
-            with c1: 
-                chem_select = st.selectbox("เลือกสารเคมี:", list(CHEMICAL_CONFIG.keys()))
-                action = st.selectbox("ทำรายการ:", ["📥 เติมสารเคมี (In)", "📤 เบิกจ่าย (Out)"])
-            with c2:
-                kg_input = st.number_input("ปริมาณ (KG):", min_value=0.1, step=10.0)
-                # Auto Calculate L for preview
-                density_now = CHEMICAL_CONFIG[chem_select]['density']
-                st.info(f"≈ {kg_input / density_now:,.2f} Liters (Density: {density_now})")
-            with c3:
-                date_input = st.date_input("วันที่:", get_thai_now())
-                remark = st.text_input("หมายเหตุ/เลขที่เอกสาร:")
-            
-            submitted = st.form_submit_button("บันทึกข้อมูล", type="primary")
-            
-            if submitted:
-                # Validation เช็คถังเต็ม
-                if action == "📥 เติมสารเคมี (In)":
-                    current = chem_bal.get(chem_select, 0)
-                    if current + kg_input > CHEMICAL_CONFIG[chem_select]['limit']:
-                        st.warning(f"⚠️ คำเตือน: การเติมครั้งนี้จะทำให้เกินขีดจำกัด ({CHEMICAL_CONFIG[chem_select]['limit']:,} KG)")
-                    save_chem_transaction(date_input, chem_select, "In", kg_input, density_now, remark)
-                else:
-                    # Validation เช็คของไม่พอจ่าย
-                    current = chem_bal.get(chem_select, 0)
-                    if current - kg_input < 0:
-                        st.error("❌ ทำรายการไม่ได้: ปริมาณคงเหลือไม่พอจ่าย")
-                    else:
-                        save_chem_transaction(date_input, chem_select, "Out", kg_input, density_now, remark)
-
-    # 4. ตารางประวัติ (History Table)
-    st.subheader("📜 ประวัติการทำรายการ")
-    if not chem_df.empty:
-        # ปุ่มดาวน์โหลด
-        if is_admin:
-            csv = chem_df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 ดาวน์โหลดประวัติสารเคมี (CSV)", csv, "chemical_history.csv", "text/csv")
+        st.markdown("---")
+        st.subheader("🛠️ ส่วนจัดการสำหรับ Admin (Material Control)")
         
-        st.dataframe(
-            chem_df[['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'remark']],
-            use_container_width=True, hide_index=True,
-            column_config={
-                "qty_kg": st.column_config.NumberColumn("ปริมาณ (KG)", format="%.2f"),
-                "qty_l": st.column_config.NumberColumn("ปริมาณ (L)", format="%.2f"),
-                "date": st.column_config.DateColumn("วันที่"),
-                "action_type": "รายการ"
-            }
-        )
+        # แท็บสำหรับทำงาน
+        tab1, tab2 = st.tabs(["📝 บันทึกรายการ (Transaction)", "📜 ประวัติการรับ/จ่าย (History)"])
+        
+        with tab1:
+            st.caption("บันทึกการ รับเข้า (In) หรือ เบิกจ่าย (Out)")
+            with st.form("chem_form"):
+                c1, c2, c3 = st.columns(3)
+                with c1: 
+                    chem_select = st.selectbox("เลือกสารเคมี:", list(CHEMICAL_CONFIG.keys()))
+                    action = st.selectbox("ทำรายการ:", ["📥 เติมสารเคมี (In)", "📤 เบิกจ่าย (Out)"])
+                with c2:
+                    kg_input = st.number_input("ปริมาณ (KG):", min_value=0.1, step=10.0)
+                    density_now = CHEMICAL_CONFIG[chem_select]['density']
+                    st.info(f"≈ {kg_input / density_now:,.2f} Liters")
+                with c3:
+                    date_input = st.date_input("วันที่:", get_thai_now())
+                    remark = st.text_input("หมายเหตุ/เลขที่เอกสาร:")
+                
+                submitted = st.form_submit_button("บันทึกข้อมูล", type="primary")
+                
+                if submitted:
+                    if action == "📥 เติมสารเคมี (In)":
+                        current = chem_bal.get(chem_select, 0)
+                        if current + kg_input > CHEMICAL_CONFIG[chem_select]['limit']:
+                            st.warning(f"⚠️ คำเตือน: การเติมครั้งนี้จะทำให้เกินขีดจำกัด")
+                        save_chem_transaction(date_input, chem_select, "In", kg_input, density_now, remark)
+                    else:
+                        current = chem_bal.get(chem_select, 0)
+                        if current - kg_input < 0:
+                            st.error("❌ ปริมาณคงเหลือไม่พอจ่าย")
+                        else:
+                            save_chem_transaction(date_input, chem_select, "Out", kg_input, density_now, remark)
+        
+        with tab2:
+            st.caption("ประวัติการเคลื่อนไหวทั้งหมด")
+            if not chem_df.empty:
+                csv = chem_df.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
+                
+                st.dataframe(
+                    chem_df[['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'remark']],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "qty_kg": st.column_config.NumberColumn("ปริมาณ (KG)", format="%.2f"),
+                        "qty_l": st.column_config.NumberColumn("ปริมาณ (L)", format="%.2f"),
+                        "date": st.column_config.DateColumn("วันที่"),
+                        "action_type": "รายการ"
+                    }
+                )
+            else:
+                st.info("ยังไม่มีประวัติรายการ")
     else:
-        st.info("ยังไม่มีประวัติรายการ")
+        # ถ้าเป็น User ทั่วไป ให้จบแค่ Dashboard ไม่แสดงส่วนล่าง
+        pass
 
 
-# --- (เมนูเดิม: Dashboard) ---
+# --- (เมนูเดิม: Dashboard วัสดุทั่วไป) ---
 elif choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
-    st.header("📊 Dashboard ภาพรวมสต็อก")
+    st.header("📊 Dashboard ภาพรวมสต็อก (General)")
     if not balance_df.empty:
         st.subheader("⚠️ แจ้งเตือนวันหมดอายุ")
         today = get_thai_now().strftime('%Y-%m-%d')
         next_30 = (get_thai_now() + timedelta(days=30)).strftime('%Y-%m-%d')
-        
         has_exp = balance_df[balance_df['expiry_date'].notna() & (balance_df['Balance']>0)]
         expired = has_exp[has_exp['expiry_date'] < today]
         near = has_exp[(has_exp['expiry_date'] >= today) & (has_exp['expiry_date'] <= next_30)]
-        
         c1, c2 = st.columns(2)
         with c1:
-            if not expired.empty: 
-                st.error(f"⛔ หมดอายุแล้ว ({len(expired)} รายการ)")
-                st.dataframe(expired[['expiry_date','item_name','Balance']], hide_index=True)
+            if not expired.empty: st.error(f"⛔ หมดอายุแล้ว ({len(expired)} รายการ)"); st.dataframe(expired[['expiry_date','item_name','Balance']], hide_index=True)
             else: st.success("✅ ไม่มีของหมดอายุ")
         with c2:
-            if not near.empty: 
-                st.warning(f"⚠️ ใกล้หมดอายุ ({len(near)} รายการ)")
-                st.dataframe(near[['expiry_date','item_name','Balance']], hide_index=True)
+            if not near.empty: st.warning(f"⚠️ ใกล้หมดอายุ ({len(near)} รายการ)"); st.dataframe(near[['expiry_date','item_name','Balance']], hide_index=True)
             else: st.success("✅ ไม่มีของใกล้หมดอายุ")
-            
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 รายการทั้งหมด", len(balance_df))
@@ -342,16 +342,13 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
         with c2: 
             cats = ["ทั้งหมด"] + sorted([c for c in balance_df['category'].unique() if c!='-'])
             sel = st.selectbox("หมวดหมู่:", cats)
-            
         show = balance_df.copy()
         if sel != "ทั้งหมด": show = show[show['category']==sel]
         if txt: show = show[show.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
-        
         if is_admin:
             csv = show.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 ดาวน์โหลด (CSV)", csv, "stock_overview.csv", "text/csv", type="primary")
         else: st.caption("ℹ️ เฉพาะ Material Control Department เท่านั้นที่สามารถดาวน์โหลดข้อมูลได้")
-        
         st.dataframe(show[['item_code','item_name','category','In','Out','Balance','unit','expiry_date']], use_container_width=True, hide_index=True)
     else: st.info("ไม่มีข้อมูล")
 
@@ -369,11 +366,9 @@ elif choice == "📉 วัสดุหมดสต๊อก (Out of Stock)":
             show = out_of_stock_df
             if sel != "ทั้งหมด": show = show[show['category']==sel]
             if txt: show = show[show.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
-
             if is_admin:
                 csv = show.to_csv(index=False).encode('utf-8-sig')
                 st.download_button("📥 ดาวน์โหลด (CSV)", csv, "out_of_stock.csv", "text/csv", type="primary")
-            
             st.error(f"พบรายการหมดจำนวน: {len(show)} รายการ")
             st.dataframe(show[['item_code','item_name','category','Balance','unit']], use_container_width=True, hide_index=True)
         else: st.success("✅ เยี่ยมมาก! ไม่มีรายการวัสดุหมดสต๊อกในขณะนี้")
