@@ -17,9 +17,9 @@ DB_NAME = os.path.join(BASE_DIR, 'inventory_chem_v6.db')
 # 🔥 ค่าคงที่สำหรับสารเคมี (Config)
 # ⚠️ เปลี่ยน T11-2005A -> T11-2005B ตามที่ขอ
 CHEMICAL_CONFIG = {
-    "T11-2005B":    {"capacity": 60000, "limit": 48000, "density": 1.52, "name": "Sodium hydroxide 45% (NaOH)"},
-    "T11-1002A":    {"capacity": 60000, "limit": 48000, "density": 1.84, "name": "Sulphuric acid 50% (H2SO4)"},
-    "T11-1001":     {"capacity": 60000, "limit": 48000, "density": 1.18, "name": "Hydrochloric acid 31.2% (HCL)"},
+    "T11-2005B":    {"capacity": 60000, "limit": 48000, "density": 1.48, "name": "Sodium hydroxide 45% (NaOH)"},
+    "T11-1002A":    {"capacity": 60000, "limit": 48000, "density": 1.40, "name": "Sulphuric acid 50% (H2SO4)"},
+    "T11-1001":     {"capacity": 60000, "limit": 48000, "density": 1.16, "name": "Hydrochloric acid 31.2% (HCL)"},
     "T11-9007B102": {"capacity": 30000, "limit": 24000, "density": 1.20, "name": "Hydrogen Peroxide (ไฮโดรเจนเปอร์ออกไซด์ 50%)"}
 }
 
