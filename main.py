@@ -11,11 +11,10 @@ import time
 st.set_page_config(page_title="Inventory & Chemical System", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 🔥 สร้าง DB ใหม่ v6 (รองรับรหัส T11-2005B)
+# 🔥 ใช้ DB v6 (โครงสร้างเดิมที่เสถียรแล้ว)
 DB_NAME = os.path.join(BASE_DIR, 'inventory_chem_v6.db')
 
 # 🔥 ค่าคงที่สำหรับสารเคมี (Config)
-# ⚠️ เปลี่ยน T11-2005A -> T11-2005B ตามที่ขอ
 CHEMICAL_CONFIG = {
     "T11-2005B":    {"capacity": 60000, "limit": 48000, "density": 1.48, "name": "Sodium hydroxide 45% (NaOH)"},
     "T11-1002A":    {"capacity": 60000, "limit": 48000, "density": 1.40, "name": "Sulphuric acid 50% (H2SO4)"},
@@ -24,7 +23,6 @@ CHEMICAL_CONFIG = {
 }
 
 # 🔥 ตารางเทียบชื่อสารเคมี (Mapping)
-# เพิ่ม T11-2005A ให้ชี้ไปที่ T11-2005B (เผื่อไฟล์ Excel ยังเป็นรหัสเก่า)
 CHEM_MAPPING = {
     # NaOH (Map เข้า T11-2005B)
     "T11-2005A": "T11-2005B", "T11-2005": "T11-2005B", "Sodium hydroxide": "T11-2005B", "โซดาไฟ": "T11-2005B", "NaOH": "T11-2005B",
@@ -94,12 +92,12 @@ def save_to_db(df, action_type):
         if 'item_code' in df.columns:
             df['item_code'] = df['item_code'].fillna('-')
         df.to_sql('transactions', conn, if_exists='append', index=False)
-        st.success(f"✅ บันทึกวัสดุทั่วไป (Material) เรียบร้อย! ({len(df)} รายการ)")
+        st.success(f"✅ บันทึกวัสดุ (Material) เรียบร้อย! ({len(df)} รายการ)")
         st.cache_data.clear()
     except Exception as e: st.error(f"❌ Error Material: {e}")
     finally: conn.close()
 
-# --- ฟังก์ชันจัดการสารเคมี (Chemical Batch) ---
+# --- ฟังก์ชันจัดการถังบรรจุสารเคมี (Chemical Tank Batch) ---
 def save_chem_batch(df, action_type):
     if df.empty: return
     conn = sqlite3.connect(DB_NAME)
@@ -116,7 +114,7 @@ def save_chem_batch(df, action_type):
             if raw_code in CHEMICAL_CONFIG:
                 code = raw_code
             else:
-                # 2. เช็ค Mapping (แปลงรหัสเก่า/ชื่อ เป็นรหัสใหม่)
+                # 2. เช็ค Mapping
                 for k, v in CHEM_MAPPING.items():
                     if k.lower() in raw_code.lower():
                         code = v
@@ -274,15 +272,13 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
     
     st.subheader("📊 สถานะถังเก็บปัจจุบัน")
     cols = st.columns(4)
-    # แสดงตาม Config (ใช้รหัสวัสดุเป็นหัวข้อ)
     for i, (code, conf) in enumerate(CHEMICAL_CONFIG.items()):
         current_kg = chem_bal.get(code, 0)
         current_l = current_kg / conf['density']
         percent = (current_kg / conf['limit']) * 100
         with cols[i]:
-            st.markdown(f"#### {code}") # <--- แสดงรหัสวัสดุ เช่น T11-2005B
+            st.markdown(f"#### {code}")
             st.caption(conf['name'])
-            
             safe_pct = max(0.0, min(percent/100, 1.0))
             if current_kg > conf['limit']: st.progress(safe_pct, text="⚠️ OVER")
             elif current_kg > conf['limit']*0.9: st.progress(safe_pct, text="🟠 Warning")
@@ -292,7 +288,7 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
             st.divider()
 
     st.markdown("---")
-    st.subheader("📜 ประวัติการรับ/จ่ายสารเคมี")
+    st.subheader("📜 ประวัติการรับ/จ่ายถังบรรจุสารเคมี")
     if not chem_df.empty:
         csv = chem_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
@@ -395,27 +391,44 @@ elif choice == "🔍 ค้นหา (Search)":
 
 # --- 📅 รายงานประจำวัน ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
-    st.header("📅 รายงานประจำวัน (รวม Material & Chemical)")
+    st.header("📅 รายงานประจำวัน (แยกประเภท)")
     date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
     
-    st.subheader("1. วัสดุทั่ว (Material)")
-    if not df.empty:
-        daily_mat = df[df['date'] == date]
-        if not daily_mat.empty:
-            st.dataframe(daily_mat, use_container_width=True, hide_index=True)
-        else: st.info("ไม่มีรายการวัสดุวันนี้")
+    # 🔥 แยก Tabs ตามที่ขอ
+    tab1, tab2 = st.tabs(["📦 วัสดุ (Material)", "🧪 ถังบรรจุสารเคมี (Chemical Tank)"])
     
-    st.subheader("2. ถังบรรจุสารเคมี (Chemical)")
-    if not chem_df.empty:
-        daily_chem = chem_df[chem_df['date'] == date]
-        if not daily_chem.empty:
-            # 🔥 เลือกคอลัมน์และตัด ID ออก
-            st.dataframe(
-                daily_chem[['date', 'chem_code', 'chem_desc', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']],
-                use_container_width=True, hide_index=True,
-                column_config={"chem_code": "รหัสวัสดุ", "qty_kg": st.column_config.NumberColumn("KG", format="%.2f"), "qty_l": st.column_config.NumberColumn("L", format="%.2f"), "chem_desc": "คำอธิบาย"}
-            )
-        else: st.info("ไม่มีรายการถังบรรจุสารเคมีวันนี้")
+    # Tab 1: Material
+    with tab1:
+        if not df.empty:
+            daily_mat = df[df['date'] == date]
+            if not daily_mat.empty:
+                # 🔥 เลือกคอลัมน์ (ตัด ID ออก)
+                cols_mat = ['date', 'item_code', 'item_name', 'action_type', 'quantity', 'unit', 'department', 'requester', 'remark']
+                st.dataframe(daily_mat[cols_mat], use_container_width=True, hide_index=True,
+                             column_config={"date": st.column_config.DateColumn("วันที่")})
+            else: st.info("ไม่มีรายการวัสดุวันนี้")
+        else: st.info("ไม่มีข้อมูลในระบบ")
+
+    # Tab 2: Chemical Tank
+    with tab2:
+        if not chem_df.empty:
+            daily_chem = chem_df[chem_df['date'] == date]
+            if not daily_chem.empty:
+                # 🔥 เลือกคอลัมน์ (ตัด ID และ Remark ออก)
+                cols_chem = ['date', 'chem_code', 'chem_desc', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']
+                st.dataframe(
+                    daily_chem[cols_chem],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "chem_code": "รหัสวัสดุ", 
+                        "chem_desc": "คำอธิบาย",
+                        "qty_kg": st.column_config.NumberColumn("KG", format="%.2f"), 
+                        "qty_l": st.column_config.NumberColumn("L", format="%.2f"),
+                        "date": st.column_config.DateColumn("วันที่")
+                    }
+                )
+            else: st.info("ไม่มีรายการถังบรรจุสารเคมีวันนี้")
+        else: st.info("ไม่มีข้อมูลในระบบ")
 
 # --- 📥 รับเข้า (In) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
