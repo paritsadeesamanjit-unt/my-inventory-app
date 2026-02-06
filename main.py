@@ -21,7 +21,7 @@ CHEMICAL_CONFIG = {
     "H2O2":   {"capacity": 30000, "limit": 24000, "density": 1.20, "name": "Hydrogen Peroxide (ไฮโดรเจนเปอร์ออกไซด์ 50%)"}
 }
 
-# 🔥 ตารางเทียบชื่อสารเคมี (Update: เพิ่ม T11-9007B102)
+# 🔥 ตารางเทียบชื่อสารเคมี (Mapping)
 CHEM_MAPPING = {
     # NaOH
     "T11-2005A": "NaOH", "T11-2005": "NaOH", "Sodium hydroxide": "NaOH", "โซดาไฟ": "NaOH",
@@ -29,9 +29,8 @@ CHEM_MAPPING = {
     "T11-1002A": "H2SO4", "T11-1002": "H2SO4", "T11-1003": "H2SO4", "Sulfuric acid": "H2SO4", "กรดซัลฟิวริก": "H2SO4",
     # HCl
     "T11-1001": "HCl", "Hydrochloric acid": "HCl", "กรดเกลือ": "HCl",
-    # H2O2
-    "T11-9007B102": "H2O2", # <--- เพิ่มรหัสใหม่ตามที่แจ้ง
-    "T11-1004": "H2O2", "T11-1004A": "H2O2", "Hydrogen peroxide": "H2O2", "ไฮโดรเจน": "H2O2", "H2O2": "H2O2"
+    # H2O2 (รวมรหัสใหม่ T11-9007B102)
+    "T11-9007B102": "H2O2", "T11-1004": "H2O2", "T11-1004A": "H2O2", "Hydrogen peroxide": "H2O2", "ไฮโดรเจน": "H2O2", "H2O2": "H2O2"
 }
 
 def get_thai_now():
@@ -107,10 +106,9 @@ def save_chem_batch(df, action_type):
         unknown_codes = []
 
         for _, row in df.iterrows():
-            # ดึงรหัสวัสดุ
             raw_code = str(row['r_code']).strip()
             
-            # Mapping รหัส
+            # Mapping
             code = None
             if raw_code in CHEMICAL_CONFIG:
                 code = raw_code
@@ -127,8 +125,14 @@ def save_chem_batch(df, action_type):
             kg = float(row['qty_kg'])
             date = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
             remark = str(row.get('remark', ''))
+            # ถ้า remark เป็น nan ให้เปลี่ยนเป็นค่าว่าง
+            if remark.lower() == 'nan': remark = ''
+            
             requester = str(row.get('requester', ''))
+            if requester.lower() == 'nan': requester = ''
+            
             department = str(row.get('department', ''))
+            if department.lower() == 'nan': department = ''
             
             density = CHEMICAL_CONFIG[code]['density']
             qty_l = kg / density if density > 0 else 0
@@ -145,7 +149,6 @@ def save_chem_batch(df, action_type):
         
         if unknown_codes:
             st.warning(f"⚠️ พบรายการสารเคมีที่ไม่รู้จัก: {list(set(unknown_codes))}")
-            st.info(f"ระบบรู้จัก: {list(CHEM_MAPPING.keys())}")
             
         st.cache_data.clear()
     except Exception as e: st.error(f"❌ Error Chemical: {e}")
@@ -273,14 +276,26 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
             csv = chem_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
             
+            # 🔥 Logic: แสดง KG และ L คู่กัน, ซ่อน Remark ถ้าไม่มีข้อมูล
+            disp_cols = ['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']
+            
+            # เช็คว่ามี Remark ไหม ถ้ามีให้เพิ่มเข้าไป
+            has_remark = False
+            if 'remark' in chem_df.columns:
+                # เช็คว่ามีข้อมูลที่ไม่ใช่ค่าว่างหรือไม่
+                if not chem_df['remark'].astype(str).str.strip().eq('').all():
+                    disp_cols.append('remark')
+            
             st.dataframe(
-                chem_df[['date', 'chem_code', 'action_type', 'qty_kg', 'department', 'requester', 'remark']], 
+                chem_df[disp_cols], 
                 use_container_width=True, 
                 hide_index=True,
                 column_config={
                     "qty_kg": st.column_config.NumberColumn("จำนวน (KG)", format="%.2f"),
+                    "qty_l": st.column_config.NumberColumn("จำนวน (L)", format="%.2f"), # <--- เพิ่ม L
                     "department": "แผนก",
-                    "requester": "ผู้เบิก"
+                    "requester": "ผู้เบิก",
+                    "date": st.column_config.DateColumn("วันที่")
                 }
             )
         else: st.info("ยังไม่มีประวัติรายการ")
@@ -378,9 +393,20 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
     if not chem_df.empty:
         daily_chem = chem_df[chem_df['date'] == date]
         if not daily_chem.empty:
+            # 🔥 Logic: แสดง KG และ L, ซ่อน Remark ถ้าไม่มี
+            disp_cols = ['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']
+            if not daily_chem['remark'].astype(str).str.strip().eq('').all():
+                disp_cols.append('remark')
+
             st.dataframe(
-                daily_chem[['date', 'chem_code', 'action_type', 'qty_kg', 'department', 'requester', 'remark']],
-                use_container_width=True, hide_index=True
+                daily_chem[disp_cols],
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "qty_kg": st.column_config.NumberColumn("จำนวน (KG)", format="%.2f"),
+                    "qty_l": st.column_config.NumberColumn("จำนวน (L)", format="%.2f"),
+                    "department": "แผนก",
+                    "requester": "ผู้เบิก"
+                }
             )
         else: st.info("ไม่มีรายการสารเคมีวันนี้")
 
@@ -448,7 +474,7 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank (เบิกออก)")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
-            # Mapping เบิกออก + ผู้เบิก + แผนก
+            # Mapping เบิกออก
             cmap_chem = {
                 'วันที่เบิกจ่าย':'date', 'รหัสวัสดุ':'r_code', 'จำนวนที่เบิก':'qty_kg', 
                 'หน่วยงานที่เบิก':'department', 'ผู้ที่ทำการเบิก':'requester', 'หมายเหตุ':'remark'
