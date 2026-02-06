@@ -11,7 +11,8 @@ import time
 st.set_page_config(page_title="Inventory & Chemical System", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = os.path.join(BASE_DIR, 'inventory_v2.db')
+# 🔥 สร้างไฟล์ DB ใหม่ (inventory_chem_v3.db) เพื่อรองรับโครงสร้างใหม่ที่ตัด Remark ออก
+DB_NAME = os.path.join(BASE_DIR, 'inventory_chem_v3.db')
 
 # 🔥 ค่าคงที่สำหรับสารเคมี (Config)
 CHEMICAL_CONFIG = {
@@ -29,7 +30,7 @@ CHEM_MAPPING = {
     "T11-1002A": "H2SO4", "T11-1002": "H2SO4", "T11-1003": "H2SO4", "Sulfuric acid": "H2SO4", "กรดซัลฟิวริก": "H2SO4",
     # HCl
     "T11-1001": "HCl", "Hydrochloric acid": "HCl", "กรดเกลือ": "HCl",
-    # H2O2 (รวมรหัสใหม่ T11-9007B102)
+    # H2O2
     "T11-9007B102": "H2O2", "T11-1004": "H2O2", "T11-1004A": "H2O2", "Hydrogen peroxide": "H2O2", "ไฮโดรเจน": "H2O2", "H2O2": "H2O2"
 }
 
@@ -58,7 +59,7 @@ def init_db():
             upload_time TEXT 
         )
     ''')
-    # ตารางสารเคมี
+    # ตารางสารเคมี (ตัด remark ออก)
     c.execute('''
         CREATE TABLE IF NOT EXISTS chemical_transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,7 +71,6 @@ def init_db():
             density REAL,
             department TEXT,
             requester TEXT,
-            remark TEXT,
             upload_time TEXT
         )
     ''')
@@ -124,10 +124,8 @@ def save_chem_batch(df, action_type):
 
             kg = float(row['qty_kg'])
             date = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
-            remark = str(row.get('remark', ''))
-            # ถ้า remark เป็น nan ให้เปลี่ยนเป็นค่าว่าง
-            if remark.lower() == 'nan': remark = ''
             
+            # ดึงข้อมูลผู้เบิก/แผนก (ถ้ามี) ถ้าไม่มีให้เป็นค่าว่าง
             requester = str(row.get('requester', ''))
             if requester.lower() == 'nan': requester = ''
             
@@ -137,12 +135,13 @@ def save_chem_batch(df, action_type):
             density = CHEMICAL_CONFIG[code]['density']
             qty_l = kg / density if density > 0 else 0
             
-            records.append((date, code, action_type, kg, qty_l, density, department, requester, remark, batch_timestamp))
+            # บันทึกโดยไม่มี remark
+            records.append((date, code, action_type, kg, qty_l, density, department, requester, batch_timestamp))
         
         if records:
             conn.executemany('''
-                INSERT INTO chemical_transactions (date, chem_code, action_type, qty_kg, qty_l, density, department, requester, remark, upload_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO chemical_transactions (date, chem_code, action_type, qty_kg, qty_l, density, department, requester, upload_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', records)
             conn.commit()
             st.success(f"✅ บันทึกสารเคมี (Chemical) เรียบร้อย! ({len(records)} รายการ)")
@@ -230,9 +229,25 @@ if role == "🔑 Material Control Department":
     elif password: st.sidebar.error("รหัสผิด ❌")
 
 if is_admin:
-    menu_options = ["📊 Dashboard & แจ้งเตือน", "🧪 ระบบจัดการสารเคมี (Chemical Tanks)", "📋 วัสดุทั้งหมด (Overview)", "📉 วัสดุหมดสต๊อก (Out of Stock)", "🔍 ค้นหา (Search)", "📅 รายงานประจำวัน (Daily)", "📥 รับเข้า (In)", "📤 เบิกออก (Out)", "🔧 จัดการข้อมูล"]
+    # Admin เห็นครบทุกอย่าง
+    menu_options = [
+        "📊 Dashboard & แจ้งเตือน", 
+        "🧪 ระบบจัดการสารเคมี (Chemical Tanks)", # <--- เฉพาะ Admin
+        "📋 วัสดุทั้งหมด (Overview)", 
+        "📉 วัสดุหมดสต๊อก (Out of Stock)", 
+        "🔍 ค้นหา (Search)",   
+        "📅 รายงานประจำวัน (Daily)", 
+        "📥 รับเข้า (In)", 
+        "📤 เบิกออก (Out)", 
+        "🔧 จัดการข้อมูล"
+    ]
 else:
-    menu_options = ["🧪 ระบบจัดการสารเคมี (Chemical Tanks)", "📋 วัสดุทั้งหมด (Overview)", "📉 วัสดุหมดสต๊อก (Out of Stock)", "🔍 ค้นหา (Search)"]
+    # User ทั่วไป (ซ่อนเมนูสารเคมี)
+    menu_options = [
+        "📋 วัสดุทั้งหมด (Overview)", 
+        "📉 วัสดุหมดสต๊อก (Out of Stock)", 
+        "🔍 ค้นหา (Search)"
+    ]
 
 st.sidebar.markdown("---")
 choice = st.sidebar.radio("เมนู:", menu_options)
@@ -248,8 +263,8 @@ chem_bal = calculate_chem_balance(chem_df)
 # 3. ส่วนเนื้อหา (Content)
 # ==========================================
 
-# --- 🧪 สารเคมี (Chemical) ---
-if choice == "🧪 ระบบจัดการสารเคมี (Chemical Tanks)":
+# --- 🧪 สารเคมี (Chemical) - เฉพาะ Admin ---
+if choice == "🧪 ระบบจัดการสารเคมี (Chemical Tanks)" and is_admin:
     st.header("🧪 ระบบจัดการสารเคมี (Chemical Tank Management)")
     
     st.subheader("📊 สถานะถังเก็บปัจจุบัน")
@@ -269,36 +284,26 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
             st.caption(f"Limit: {conf['limit']:,} KG")
             st.divider()
 
-    if is_admin:
-        st.markdown("---")
-        st.subheader("📜 ประวัติการรับ/จ่ายสารเคมี")
-        if not chem_df.empty:
-            csv = chem_df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
-            
-            # 🔥 Logic: แสดง KG และ L คู่กัน, ซ่อน Remark ถ้าไม่มีข้อมูล
-            disp_cols = ['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']
-            
-            # เช็คว่ามี Remark ไหม ถ้ามีให้เพิ่มเข้าไป
-            has_remark = False
-            if 'remark' in chem_df.columns:
-                # เช็คว่ามีข้อมูลที่ไม่ใช่ค่าว่างหรือไม่
-                if not chem_df['remark'].astype(str).str.strip().eq('').all():
-                    disp_cols.append('remark')
-            
-            st.dataframe(
-                chem_df[disp_cols], 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "qty_kg": st.column_config.NumberColumn("จำนวน (KG)", format="%.2f"),
-                    "qty_l": st.column_config.NumberColumn("จำนวน (L)", format="%.2f"), # <--- เพิ่ม L
-                    "department": "แผนก",
-                    "requester": "ผู้เบิก",
-                    "date": st.column_config.DateColumn("วันที่")
-                }
-            )
-        else: st.info("ยังไม่มีประวัติรายการ")
+    st.markdown("---")
+    st.subheader("📜 ประวัติการรับ/จ่ายสารเคมี")
+    if not chem_df.empty:
+        csv = chem_df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
+        
+        # 🔥 แสดงเฉพาะคอลัมน์ที่จำเป็น (ไม่มี remark)
+        st.dataframe(
+            chem_df[['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']], 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "qty_kg": st.column_config.NumberColumn("จำนวน (KG)", format="%.2f"),
+                "qty_l": st.column_config.NumberColumn("จำนวน (L)", format="%.2f"),
+                "department": "แผนก",
+                "requester": "ผู้เบิก",
+                "date": st.column_config.DateColumn("วันที่")
+            }
+        )
+    else: st.info("ยังไม่มีประวัติรายการ")
 
 # --- 📊 Dashboard ---
 elif choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
@@ -393,20 +398,11 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
     if not chem_df.empty:
         daily_chem = chem_df[chem_df['date'] == date]
         if not daily_chem.empty:
-            # 🔥 Logic: แสดง KG และ L, ซ่อน Remark ถ้าไม่มี
-            disp_cols = ['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']
-            if not daily_chem['remark'].astype(str).str.strip().eq('').all():
-                disp_cols.append('remark')
-
+            # 🔥 แสดงเฉพาะคอลัมน์ที่จำเป็น (ไม่มี remark)
             st.dataframe(
-                daily_chem[disp_cols],
+                daily_chem[['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']],
                 use_container_width=True, hide_index=True,
-                column_config={
-                    "qty_kg": st.column_config.NumberColumn("จำนวน (KG)", format="%.2f"),
-                    "qty_l": st.column_config.NumberColumn("จำนวน (L)", format="%.2f"),
-                    "department": "แผนก",
-                    "requester": "ผู้เบิก"
-                }
+                column_config={"qty_kg": st.column_config.NumberColumn("KG", format="%.2f"), "qty_l": st.column_config.NumberColumn("L", format="%.2f")}
             )
         else: st.info("ไม่มีรายการสารเคมีวันนี้")
 
@@ -439,8 +435,8 @@ elif choice == "📥 รับเข้า (In)" and is_admin:
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
-            # Mapping รับเข้า
-            cmap_chem = {'วันที่รับเข้า':'date', 'รหัสวัสดุ':'r_code', 'จำนวน':'qty_kg', 'หมายเหตุ':'remark'}
+            # Mapping รับเข้า (ไม่มีหมายเหตุ)
+            cmap_chem = {'วันที่รับเข้า':'date', 'รหัสวัสดุ':'r_code', 'จำนวน':'qty_kg'}
             d_chem = d_chem.rename(columns=cmap_chem)
             st.dataframe(d_chem.head(3))
             if st.button("✅ บันทึก Chemical", key="btn_chem_in"):
@@ -474,10 +470,10 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank (เบิกออก)")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
-            # Mapping เบิกออก
+            # Mapping เบิกออก (ไม่มีหมายเหตุ)
             cmap_chem = {
                 'วันที่เบิกจ่าย':'date', 'รหัสวัสดุ':'r_code', 'จำนวนที่เบิก':'qty_kg', 
-                'หน่วยงานที่เบิก':'department', 'ผู้ที่ทำการเบิก':'requester', 'หมายเหตุ':'remark'
+                'หน่วยงานที่เบิก':'department', 'ผู้ที่ทำการเบิก':'requester'
             }
             d_chem = d_chem.rename(columns=cmap_chem)
             st.dataframe(d_chem.head(3))
