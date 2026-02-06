@@ -28,7 +28,6 @@ def get_thai_now():
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # ตารางวัสดุทั่วไป
     c.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +45,6 @@ def init_db():
             upload_time TEXT 
         )
     ''')
-    # ตารางสารเคมี
     c.execute('''
         CREATE TABLE IF NOT EXISTS chemical_transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,8 +61,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-# --- ฟังก์ชันจัดการวัสดุทั่วไป ---
+# --- ฟังก์ชันจัดการวัสดุทั่วไป (General) ---
 def save_to_db(df, action_type):
+    if df.empty: return
     conn = sqlite3.connect(DB_NAME)
     try:
         df['action_type'] = action_type
@@ -76,9 +75,44 @@ def save_to_db(df, action_type):
         if 'item_code' in df.columns:
             df['item_code'] = df['item_code'].fillna('-')
         df.to_sql('transactions', conn, if_exists='append', index=False)
-        st.success(f"✅ บันทึกข้อมูล '{action_type}' เรียบร้อย!")
+        st.success(f"✅ บันทึกวัสดุทั่วไป (Material) เรียบร้อย! ({len(df)} รายการ)")
         st.cache_data.clear()
-    except Exception as e: st.error(f"❌ Error: {e}")
+    except Exception as e: st.error(f"❌ Error Material: {e}")
+    finally: conn.close()
+
+# --- ฟังก์ชันจัดการสารเคมี (Chemical Batch) ---
+def save_chem_batch(df, action_type):
+    if df.empty: return
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        batch_timestamp = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # เตรียมข้อมูลสำหรับบันทึก
+        records = []
+        for _, row in df.iterrows():
+            code = str(row['chem_code']).strip()
+            kg = float(row['qty_kg'])
+            date = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
+            remark = str(row.get('remark', ''))
+            
+            # หาค่า Density
+            density = 1.0
+            if code in CHEMICAL_CONFIG:
+                density = CHEMICAL_CONFIG[code]['density']
+            
+            qty_l = kg / density if density > 0 else 0
+            
+            records.append((date, code, action_type, kg, qty_l, density, remark, batch_timestamp))
+            
+        conn.executemany('''
+            INSERT INTO chemical_transactions (date, chem_code, action_type, qty_kg, qty_l, density, remark, upload_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', records)
+        
+        conn.commit()
+        st.success(f"✅ บันทึกสารเคมี (Chemical) เรียบร้อย! ({len(records)} รายการ)")
+        st.cache_data.clear()
+    except Exception as e: st.error(f"❌ Error Chemical: {e}")
     finally: conn.close()
 
 def load_data():
@@ -90,13 +124,14 @@ def load_data():
         return df
     except: return pd.DataFrame()
 
-def enrich_transactions(df):
-    if df.empty: return df
-    ref_df = df[df['category'].notna() & (~df['category'].isin(['','-']))]
-    if not ref_df.empty:
-        ref_map = ref_df.sort_values('date', ascending=False).drop_duplicates('item_code').set_index('item_code')['category']
-        df['category'] = df['category'].fillna(df['item_code'].map(ref_map))
-    return df
+def load_chem_data():
+    if not os.path.exists(DB_NAME): return pd.DataFrame()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT * FROM chemical_transactions ORDER BY date DESC, id DESC", conn)
+        conn.close()
+        return df
+    except: return pd.DataFrame()
 
 def calculate_inventory(df):
     if df.empty: return pd.DataFrame()
@@ -116,44 +151,6 @@ def calculate_inventory(df):
     bal['Balance'] = bal['In'] - bal['Out']
     return bal
 
-def delete_data(ids):
-    conn = sqlite3.connect(DB_NAME)
-    conn.execute(f"DELETE FROM transactions WHERE id IN {tuple(ids) if len(ids)>1 else f'({ids[0]})'}")
-    conn.commit()
-    conn.close()
-    st.success("ลบข้อมูลสำเร็จ"); st.cache_data.clear()
-
-def delete_batch(batch):
-    conn = sqlite3.connect(DB_NAME)
-    conn.execute("DELETE FROM transactions WHERE upload_time = ?", (batch,))
-    conn.commit()
-    conn.close()
-    st.success(f"ลบรอบ {batch} สำเร็จ"); st.cache_data.clear()
-
-# --- ฟังก์ชันจัดการสารเคมี (Chemical Functions) ---
-def save_chem_transaction(date, code, action, kg, density, remark):
-    conn = sqlite3.connect(DB_NAME)
-    try:
-        liters = kg / density if density > 0 else 0
-        now = get_thai_now().strftime('%Y-%m-%d %H:%M:%S')
-        sql = '''INSERT INTO chemical_transactions (date, chem_code, action_type, qty_kg, qty_l, density, remark, upload_time)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)'''
-        conn.execute(sql, (date, code, action, kg, liters, density, remark, now))
-        conn.commit()
-        st.success(f"✅ บันทึก {action} {code}: {kg} KG ({liters:.2f} L) เรียบร้อย")
-        st.cache_data.clear()
-    except Exception as e: st.error(f"❌ Error: {e}")
-    finally: conn.close()
-
-def load_chem_data():
-    if not os.path.exists(DB_NAME): return pd.DataFrame()
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT * FROM chemical_transactions ORDER BY date DESC, id DESC", conn)
-        conn.close()
-        return df
-    except: return pd.DataFrame()
-
 def calculate_chem_balance(df):
     if df.empty: return {}
     bal = df.pivot_table(index='chem_code', columns='action_type', values='qty_kg', aggfunc='sum', fill_value=0)
@@ -161,6 +158,21 @@ def calculate_chem_balance(df):
     if 'Out' not in bal: bal['Out'] = 0
     bal['Balance_KG'] = bal['In'] - bal['Out']
     return bal['Balance_KG'].to_dict()
+
+def delete_batch(batch):
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("DELETE FROM transactions WHERE upload_time = ?", (batch,))
+    conn.execute("DELETE FROM chemical_transactions WHERE upload_time = ?", (batch,))
+    conn.commit()
+    conn.close()
+    st.success(f"ลบรอบ {batch} สำเร็จ"); st.cache_data.clear()
+
+def delete_data(ids, table='transactions'):
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute(f"DELETE FROM {table} WHERE id IN {tuple(ids) if len(ids)>1 else f'({ids[0]})'}")
+    conn.commit()
+    conn.close()
+    st.success("ลบรายการสำเร็จ"); st.cache_data.clear()
 
 # ==========================================
 # 2. ส่วน UI หลัก
@@ -173,12 +185,11 @@ is_admin = False
 if role == "🔑 Material Control Department":
     st.sidebar.markdown("---")
     password = st.sidebar.text_input("รหัสผ่านแผนก:", type="password")
-    if password == "1111100000":
+    if password == "1234":
         is_admin = True
         st.sidebar.success("ยืนยันตัวตนสำเร็จ ✅")
     elif password: st.sidebar.error("รหัสผิด ❌")
 
-# --- เมนู ---
 if is_admin:
     menu_options = [
         "📊 Dashboard & แจ้งเตือน", 
@@ -207,113 +218,47 @@ if st.sidebar.button("🔄 รีเฟรชข้อมูล"): st.rerun()
 # โหลดข้อมูล
 df = load_data()
 balance_df = calculate_inventory(df) if not df.empty else pd.DataFrame()
+chem_df = load_chem_data()
+chem_bal = calculate_chem_balance(chem_df)
 
 # ==========================================
-# 3. ส่วนเนื้อหา (แยกตามเมนู)
+# 3. ส่วนเนื้อหา (Content)
 # ==========================================
 
-# --- 🧪 ระบบจัดการสารเคมี (Chemical Tanks) ---
+# --- 🧪 สารเคมี (Chemical) ---
 if choice == "🧪 ระบบจัดการสารเคมี (Chemical Tanks)":
     st.header("🧪 ระบบจัดการสารเคมี (Chemical Tank Management)")
     
-    # 1. โหลดและคำนวณยอด
-    chem_df = load_chem_data()
-    chem_bal = calculate_chem_balance(chem_df)
-    
-    # 2. แสดง Dashboard ถังเก็บ (เห็นได้ทั้ง User และ Admin)
     st.subheader("📊 สถานะถังเก็บปัจจุบัน (Tank Status)")
-    st.info("💡 แสดงปริมาณคงเหลือในถัง (Real-time)")
-    
     cols = st.columns(4)
     for i, (code, conf) in enumerate(CHEMICAL_CONFIG.items()):
         current_kg = chem_bal.get(code, 0)
         current_l = current_kg / conf['density']
         percent = (current_kg / conf['limit']) * 100
-        
         with cols[i]:
             st.markdown(f"#### {code}")
             st.caption(conf['name'])
-            
-            # Progress Bar
             safe_pct = max(0.0, min(percent/100, 1.0))
-            if current_kg > conf['limit']:
-                st.progress(safe_pct, text="⚠️ OVER LIMIT")
-            elif current_kg > conf['limit'] * 0.9:
-                st.progress(safe_pct, text="🟠 Warning")
-            else:
-                st.progress(safe_pct, text="🟢 Normal")
-                
-            st.metric("คงเหลือ (KG)", f"{current_kg:,.0f} KG")
-            st.metric("คงเหลือ (Liters)", f"{current_l:,.0f} L")
-            st.caption(f"Max Limit: {conf['limit']:,} KG")
+            if current_kg > conf['limit']: st.progress(safe_pct, text="⚠️ OVER")
+            elif current_kg > conf['limit']*0.9: st.progress(safe_pct, text="🟠 Warning")
+            else: st.progress(safe_pct, text="🟢 Normal")
+            st.metric("คงเหลือ", f"{current_kg:,.0f} KG", f"{current_l:,.0f} L")
+            st.caption(f"Limit: {conf['limit']:,} KG")
             st.divider()
 
-    # 3. ส่วนบันทึกและประวัติ (เฉพาะ Admin เท่านั้นที่เห็น)
     if is_admin:
         st.markdown("---")
-        st.subheader("🛠️ ส่วนจัดการสำหรับ Admin (Material Control)")
-        
-        # แท็บสำหรับทำงาน
-        tab1, tab2 = st.tabs(["📝 บันทึกรายการ (Transaction)", "📜 ประวัติการรับ/จ่าย (History)"])
-        
-        with tab1:
-            st.caption("บันทึกการ รับเข้า (In) หรือ เบิกจ่าย (Out)")
-            with st.form("chem_form"):
-                c1, c2, c3 = st.columns(3)
-                with c1: 
-                    chem_select = st.selectbox("เลือกสารเคมี:", list(CHEMICAL_CONFIG.keys()))
-                    action = st.selectbox("ทำรายการ:", ["📥 เติมสารเคมี (In)", "📤 เบิกจ่าย (Out)"])
-                with c2:
-                    kg_input = st.number_input("ปริมาณ (KG):", min_value=0.1, step=10.0)
-                    density_now = CHEMICAL_CONFIG[chem_select]['density']
-                    st.info(f"≈ {kg_input / density_now:,.2f} Liters")
-                with c3:
-                    date_input = st.date_input("วันที่:", get_thai_now())
-                    remark = st.text_input("หมายเหตุ/เลขที่เอกสาร:")
-                
-                submitted = st.form_submit_button("บันทึกข้อมูล", type="primary")
-                
-                if submitted:
-                    if action == "📥 เติมสารเคมี (In)":
-                        current = chem_bal.get(chem_select, 0)
-                        if current + kg_input > CHEMICAL_CONFIG[chem_select]['limit']:
-                            st.warning(f"⚠️ คำเตือน: การเติมครั้งนี้จะทำให้เกินขีดจำกัด")
-                        save_chem_transaction(date_input, chem_select, "In", kg_input, density_now, remark)
-                    else:
-                        current = chem_bal.get(chem_select, 0)
-                        if current - kg_input < 0:
-                            st.error("❌ ปริมาณคงเหลือไม่พอจ่าย")
-                        else:
-                            save_chem_transaction(date_input, chem_select, "Out", kg_input, density_now, remark)
-        
-        with tab2:
-            st.caption("ประวัติการเคลื่อนไหวทั้งหมด")
-            if not chem_df.empty:
-                csv = chem_df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
-                
-                st.dataframe(
-                    chem_df[['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'remark']],
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "qty_kg": st.column_config.NumberColumn("ปริมาณ (KG)", format="%.2f"),
-                        "qty_l": st.column_config.NumberColumn("ปริมาณ (L)", format="%.2f"),
-                        "date": st.column_config.DateColumn("วันที่"),
-                        "action_type": "รายการ"
-                    }
-                )
-            else:
-                st.info("ยังไม่มีประวัติรายการ")
-    else:
-        # ถ้าเป็น User ทั่วไป ให้จบแค่ Dashboard ไม่แสดงส่วนล่าง
-        pass
+        st.subheader("📜 ประวัติการรับ/จ่ายสารเคมี (History)")
+        if not chem_df.empty:
+            csv = chem_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
+            st.dataframe(chem_df[['date', 'chem_code', 'action_type', 'qty_kg', 'qty_l', 'remark']], use_container_width=True, hide_index=True)
+        else: st.info("ยังไม่มีประวัติรายการ")
 
-
-# --- (เมนูเดิม: Dashboard วัสดุทั่วไป) ---
+# --- 📊 Dashboard ---
 elif choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
-    st.header("📊 Dashboard ภาพรวมสต็อก (General)")
+    st.header("📊 Dashboard ภาพรวมสต็อก")
     if not balance_df.empty:
-        st.subheader("⚠️ แจ้งเตือนวันหมดอายุ")
         today = get_thai_now().strftime('%Y-%m-%d')
         next_30 = (get_thai_now() + timedelta(days=30)).strftime('%Y-%m-%d')
         has_exp = balance_df[balance_df['expiry_date'].notna() & (balance_df['Balance']>0)]
@@ -328,12 +273,12 @@ elif choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
             else: st.success("✅ ไม่มีของใกล้หมดอายุ")
         st.markdown("---")
         c1, c2, c3 = st.columns(3)
-        c1.metric("📦 รายการทั้งหมด", len(balance_df))
+        c1.metric("📦 รายการวัสดุ", len(balance_df))
         c2.metric("⚠️ สินค้าหมด", len(balance_df[balance_df['Balance']<=0]))
-        c3.metric("📅 อัปเดต (เวลาไทย)", get_thai_now().strftime("%H:%M:%S"))
+        c3.metric("📅 เวลาปัจจุบัน", get_thai_now().strftime("%H:%M:%S"))
     else: st.info("ยังไม่มีข้อมูล")
 
-# --- (เมนูเดิม: วัสดุทั้งหมด) ---
+# --- 📋 วัสดุทั้งหมด ---
 elif choice == "📋 วัสดุทั้งหมด (Overview)":
     st.header("📋 รายการวัสดุคงเหลือทั้งหมด")
     if not balance_df.empty:
@@ -348,33 +293,24 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
         if is_admin:
             csv = show.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 ดาวน์โหลด (CSV)", csv, "stock_overview.csv", "text/csv", type="primary")
-        else: st.caption("ℹ️ เฉพาะ Material Control Department เท่านั้นที่สามารถดาวน์โหลดข้อมูลได้")
+        else: st.caption("ℹ️ เฉพาะ Admin เท่านั้นที่ดาวน์โหลดได้")
         st.dataframe(show[['item_code','item_name','category','In','Out','Balance','unit','expiry_date']], use_container_width=True, hide_index=True)
     else: st.info("ไม่มีข้อมูล")
 
-# --- (เมนูเดิม: วัสดุหมดสต๊อก) ---
+# --- 📉 วัสดุหมดสต๊อก ---
 elif choice == "📉 วัสดุหมดสต๊อก (Out of Stock)":
     st.header("📉 รายงานวัสดุที่ถูกเบิกจ่ายหมดแล้ว (Balance ≤ 0)")
     if not balance_df.empty:
-        out_of_stock_df = balance_df[balance_df['Balance'] <= 0].copy()
-        if not out_of_stock_df.empty:
-            c1, c2 = st.columns([2,1])
-            with c1: txt = st.text_input("🔍 ค้นหา:", placeholder="ชื่อ...")
-            with c2: 
-                cats = ["ทั้งหมด"] + sorted([c for c in out_of_stock_df['category'].unique() if c!='-'])
-                sel = st.selectbox("หมวดหมู่:", cats)
-            show = out_of_stock_df
-            if sel != "ทั้งหมด": show = show[show['category']==sel]
-            if txt: show = show[show.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
+        out = balance_df[balance_df['Balance'] <= 0]
+        if not out.empty:
             if is_admin:
-                csv = show.to_csv(index=False).encode('utf-8-sig')
+                csv = out.to_csv(index=False).encode('utf-8-sig')
                 st.download_button("📥 ดาวน์โหลด (CSV)", csv, "out_of_stock.csv", "text/csv", type="primary")
-            st.error(f"พบรายการหมดจำนวน: {len(show)} รายการ")
-            st.dataframe(show[['item_code','item_name','category','Balance','unit']], use_container_width=True, hide_index=True)
-        else: st.success("✅ เยี่ยมมาก! ไม่มีรายการวัสดุหมดสต๊อกในขณะนี้")
+            st.dataframe(out[['item_code','item_name','category','Balance','unit']], use_container_width=True, hide_index=True)
+        else: st.success("✅ เยี่ยมมาก! ไม่มีรายการวัสดุหมดสต๊อก")
     else: st.info("ไม่มีข้อมูล")
 
-# --- (เมนูเดิม: ค้นหา) ---
+# --- 🔍 ค้นหา ---
 elif choice == "🔍 ค้นหา (Search)":
     st.header("🔍 ค้นหาประวัติรายตัว")
     if not df.empty:
@@ -383,81 +319,143 @@ elif choice == "🔍 ค้นหา (Search)":
             res = df[df.astype(str).apply(lambda x: x.str.contains(txt, case=False, na=False)).any(axis=1)]
             if not res.empty:
                 if is_admin:
-                    in_sum = res[res['action_type']=='In']['quantity'].sum()
-                    out_sum = res[res['action_type']=='Out']['quantity'].sum()
-                    st.markdown(f"**สรุป:** รับ {in_sum:,.2f} | จ่าย {out_sum:,.2f} | คงเหลือ {in_sum-out_sum:,.2f}")
-                    st.dataframe(res[['date','action_type','item_name','quantity','department','requester','remark']], use_container_width=True, hide_index=True)
+                    in_s = res[res['action_type']=='In']['quantity'].sum()
+                    out_s = res[res['action_type']=='Out']['quantity'].sum()
+                    st.markdown(f"**สรุป:** รับ {in_s:,.2f} | จ่าย {out_s:,.2f} | คงเหลือ {in_s-out_s:,.2f}")
+                    st.dataframe(res, use_container_width=True, hide_index=True)
                 else:
                     summary = calculate_inventory(res)
                     for i, r in summary.iterrows():
-                         with st.container():
-                            c1,c2,c3,c4 = st.columns([2,1,1,1])
-                            c1.markdown(f"**{r['item_name']}**\nCode: {r['item_code']}")
-                            c2.metric("รับ", f"{r['In']:,.2f}")
-                            c3.metric("จ่าย", f"{r['Out']:,.2f}")
-                            c4.metric("คงเหลือ", f"{r['Balance']:,.2f}", delta_color="off" if r['Balance']>0 else "inverse")
-                            st.divider()
-            else: st.warning("ไม่พบข้อมูล")
+                        st.markdown(f"**{r['item_name']}** (Code: {r['item_code']})")
+                        st.write(f"คงเหลือ: {r['Balance']:,.2f} {r['unit']}")
+                        st.divider()
+            else: st.warning("ไม่พบ")
     else: st.info("ไม่มีข้อมูล")
 
-# --- (เมนูเดิม: รายงานประจำวัน) ---
+# --- 📅 รายงานประจำวัน ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
-    st.header("📅 รายงานประจำวัน")
+    st.header("📅 รายงานประจำวัน (รวม Material & Chemical)")
+    # Report for Material
+    st.subheader("1. วัสดุทั่วไป (Material)")
     if not df.empty:
-        enriched_df = enrich_transactions(df.copy())
-        mode = st.radio("โหมด:", ["รายวัน", "ทั้งหมด"], horizontal=True)
-        show_df = enriched_df.copy()
-        if mode == "รายวัน":
-            date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
-            show_df = show_df[show_df['date'] == date]
-        if not show_df.empty:
-            csv = show_df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 ดาวน์โหลด (CSV)", csv, "daily_report.csv", "text/csv")
-            t1, t2 = st.tabs(["📥 รับเข้า", "📤 เบิกออก"])
-            with t1: st.dataframe(show_df[show_df['action_type']=='In'][['date','item_code','item_name','quantity','unit','category','expiry_date','remark']], use_container_width=True, hide_index=True)
-            with t2: st.dataframe(show_df[show_df['action_type']=='Out'][['date','item_code','item_name','quantity','unit','category','department','requester','remark']], use_container_width=True, hide_index=True)
-        else: st.warning("ไม่มีรายการ")
+        date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
+        daily_mat = df[df['date'] == date]
+        if not daily_mat.empty:
+            st.dataframe(daily_mat, use_container_width=True, hide_index=True)
+        else: st.info("ไม่มีรายการวัสดุวันนี้")
+    
+    # Report for Chemical
+    st.subheader("2. สารเคมี (Chemical)")
+    if not chem_df.empty:
+        daily_chem = chem_df[chem_df['date'] == date]
+        if not daily_chem.empty:
+            st.dataframe(daily_chem, use_container_width=True, hide_index=True)
+        else: st.info("ไม่มีรายการสารเคมีวันนี้")
 
-# --- (เมนูเดิม: รับเข้า/เบิกออก/จัดการ) ---
+# --- 📥 รับเข้า (In) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
-    st.header("📥 รับวัสดุเข้า")
-    f = st.file_uploader("Upload Excel (In)", type=['xlsx'], key='in')
+    st.header("📥 รับเข้า (Multi-Sheet Support)")
+    st.info("💡 ไฟล์ Excel ต้องมี Sheet ชื่อ: 'Material' หรือ 'Chemical Tank'")
+    
+    f = st.file_uploader("Upload ไฟล์ (In)", type=['xlsx'], key='in')
     if f:
-        d = pd.read_excel(f)
-        if st.button("บันทึก"):
-            cmap = {'วันที่รับเข้า':'date', 'รหัสวัสดุ':'item_code', 'คำอธิบาย':'item_name', 
-                    'จำนวน':'quantity', 'หน่วย':'unit', 'วันที่หมดอายุ':'expiry_date', 
-                    'ประเภทวัสดุ':'category', 'หมายเหตุ':'remark'}
-            d = d.rename(columns=cmap)
-            req = ['date','item_code','item_name','quantity','unit','expiry_date','category','remark']
-            for c in req: 
-                if c not in d.columns: d[c] = None
-            save_to_db(d[req], 'In')
+        xls = pd.ExcelFile(f)
+        sheet_names = xls.sheet_names
+        st.write(f"📂 พบ Sheet: {sheet_names}")
+        
+        # 1. Process Material
+        if 'Material' in sheet_names:
+            st.subheader("📦 พบข้อมูล Material")
+            d_mat = pd.read_excel(f, sheet_name='Material')
+            cmap = {'วันที่':'date', 'รหัสวัสดุ':'item_code', 'ชื่อรายการ':'item_name', 
+                    'จำนวน':'quantity', 'หน่วย':'unit', 'วันหมดอายุ':'expiry_date', 
+                    'ประเภท':'category', 'หมายเหตุ':'remark'}
+            # ลอง map ชื่อคอลัมน์ (ถ้าตรง)
+            d_mat = d_mat.rename(columns=cmap)
+            st.dataframe(d_mat.head(3))
+            if st.button("✅ บันทึก Material", key="btn_mat_in"):
+                req = ['date','item_code','item_name','quantity','unit','expiry_date','category','remark']
+                for c in req: 
+                    if c not in d_mat.columns: d_mat[c] = None
+                save_to_db(d_mat[req], 'In')
+        
+        # 2. Process Chemical
+        if 'Chemical Tank' in sheet_names:
+            st.subheader("🧪 พบข้อมูล Chemical Tank")
+            d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
+            # คาดหวังคอลัมน์: วันที่, รหัสสารเคมี, จำนวน KG, หมายเหตุ
+            cmap_chem = {'วันที่':'date', 'รหัสสารเคมี':'chem_code', 'จำนวน KG':'qty_kg', 'หมายเหตุ':'remark'}
+            d_chem = d_chem.rename(columns=cmap_chem)
+            st.dataframe(d_chem.head(3))
+            if st.button("✅ บันทึก Chemical", key="btn_chem_in"):
+                # ตรวจสอบว่ามีคอลัมน์ครบไหม
+                if 'chem_code' in d_chem.columns and 'qty_kg' in d_chem.columns:
+                    save_chem_batch(d_chem, 'In')
+                else:
+                    st.error("❌ ข้อมูล Chemical ไม่ถูกต้อง (ต้องมี: รหัสสารเคมี, จำนวน KG)")
 
+# --- 📤 เบิกออก (Out) ---
 elif choice == "📤 เบิกออก (Out)" and is_admin:
-    st.header("📤 เบิกวัสดุออก")
-    f = st.file_uploader("Upload Excel (Out)", type=['xlsx'], key='out')
+    st.header("📤 เบิกออก (Multi-Sheet Support)")
+    st.info("💡 ไฟล์ Excel ต้องมี Sheet ชื่อ: 'Material' หรือ 'Chemical Tank'")
+    
+    f = st.file_uploader("Upload ไฟล์ (Out)", type=['xlsx'], key='out')
     if f:
-        d = pd.read_excel(f)
-        if st.button("บันทึก"):
-            cmap = {'วันที่เบิกจ่าย':'date', 'รหัสวัสดุ':'item_code', 'คำอธิบาย':'item_name', 
-                    'จำนวนที่เบิก':'quantity', 'หน่วย':'unit', 'หน่วยงานที่เบิก':'department', 
-                    'ผู้ที่ทำการเบิก':'requester', 'หมายเหตุ':'remark'}
-            d = d.rename(columns=cmap)
-            req = ['date','item_code','item_name','quantity','unit','department','requester','remark']
-            for c in req: 
-                if c not in d.columns: d[c] = None
-            save_to_db(d[req], 'Out')
+        xls = pd.ExcelFile(f)
+        sheet_names = xls.sheet_names
+        
+        # 1. Process Material
+        if 'Material' in sheet_names:
+            st.subheader("📦 พบข้อมูล Material (เบิกออก)")
+            d_mat = pd.read_excel(f, sheet_name='Material')
+            # Map คอลัมน์สำหรับเบิกออก (อาจมี แผนก, ผู้เบิก)
+            cmap = {'วันที่':'date', 'รหัสวัสดุ':'item_code', 'ชื่อรายการ':'item_name', 
+                    'จำนวน':'quantity', 'หน่วย':'unit', 'แผนก':'department', 
+                    'ผู้เบิก':'requester', 'ประเภท':'category', 'หมายเหตุ':'remark'}
+            d_mat = d_mat.rename(columns=cmap)
+            st.dataframe(d_mat.head(3))
+            if st.button("✅ บันทึก Material (Out)", key="btn_mat_out"):
+                req = ['date','item_code','item_name','quantity','unit','department','requester','category','remark']
+                for c in req: 
+                    if c not in d_mat.columns: d_mat[c] = None
+                save_to_db(d_mat[req], 'Out')
+        
+        # 2. Process Chemical
+        if 'Chemical Tank' in sheet_names:
+            st.subheader("🧪 พบข้อมูล Chemical Tank (เบิกออก)")
+            d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
+            cmap_chem = {'วันที่':'date', 'รหัสสารเคมี':'chem_code', 'จำนวน KG':'qty_kg', 'หมายเหตุ':'remark'}
+            d_chem = d_chem.rename(columns=cmap_chem)
+            st.dataframe(d_chem.head(3))
+            if st.button("✅ บันทึก Chemical (Out)", key="btn_chem_out"):
+                if 'chem_code' in d_chem.columns and 'qty_kg' in d_chem.columns:
+                    save_chem_batch(d_chem, 'Out')
+                else:
+                    st.error("❌ ข้อมูล Chemical ไม่ถูกต้อง")
 
+# --- 🔧 จัดการข้อมูล ---
 elif choice == "🔧 จัดการข้อมูล" and is_admin:
-    st.header("🔧 จัดการข้อมูล (วัสดุทั่วไป)")
-    if not df.empty:
-        t1, t2 = st.tabs(["Undo รอบ", "ลบรายบรรทัด"])
+    st.header("🔧 จัดการข้อมูล")
+    # รวม 2 ตาราง
+    if not df.empty or not chem_df.empty:
+        t1, t2 = st.tabs(["ลบรอบอัปโหลด", "ลบรายรายการ"])
         with t1:
-            times = df['upload_time'].unique() if 'upload_time' in df.columns else []
-            sel = st.selectbox("เลือกรอบ:", times)
-            if st.button("ลบทั้งรอบนี้"): delete_batch(sel); st.rerun()
+            # รวม Timestamp จากทั้ง 2 ตาราง
+            times1 = df['upload_time'].unique().tolist() if 'upload_time' in df else []
+            times2 = chem_df['upload_time'].unique().tolist() if 'upload_time' in chem_df else []
+            all_times = sorted(list(set(times1 + times2)), reverse=True)
+            
+            sel = st.selectbox("เลือกรอบเวลา:", all_times)
+            if st.button("🗑️ ลบข้อมูลรอบนี้"): delete_batch(sel); st.rerun()
+        
         with t2:
-            st.dataframe(df)
-            ids = st.multiselect("เลือก ID:", df['id'])
-            if st.button("ลบที่เลือก"): delete_data(ids); st.rerun()
+            st.write("เลือกตารางที่จะลบ:")
+            table_sel = st.radio("ตาราง:", ["Material", "Chemical"])
+            if table_sel == "Material":
+                st.dataframe(df)
+                ids = st.multiselect("Select ID:", df['id'])
+                if st.button("ลบ Material"): delete_data(ids, 'transactions'); st.rerun()
+            else:
+                st.dataframe(chem_df)
+                ids = st.multiselect("Select ID:", chem_df['id'])
+                if st.button("ลบ Chemical"): delete_data(ids, 'chemical_transactions'); st.rerun()
