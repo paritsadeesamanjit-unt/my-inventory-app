@@ -21,14 +21,14 @@ CHEMICAL_CONFIG = {
     "H2O2":   {"capacity": 30000, "limit": 24000, "density": 1.20, "name": "Hydrogen Peroxide (ไฮโดรเจนเปอร์ออกไซด์ 50%)"}
 }
 
-# 🔥 ตารางเทียบชื่อสารเคมี (Mapping) - ช่วยให้ Import ง่ายขึ้น
+# 🔥 ตารางเทียบชื่อสารเคมี (Update ตามไฟล์จริง)
 CHEM_MAPPING = {
     # NaOH
-    "T11-1001": "NaOH", "Sodium hydroxide": "NaOH", "โซดาไฟ": "NaOH",
+    "T11-2005A": "NaOH", "T11-2005": "NaOH", "Sodium hydroxide": "NaOH", "โซดาไฟ": "NaOH",
     # H2SO4
-    "T11-1003": "H2SO4", "Sulfuric acid": "H2SO4", "กรดซัลฟิวริก": "H2SO4",
+    "T11-1002A": "H2SO4", "T11-1002": "H2SO4", "T11-1003": "H2SO4", "Sulfuric acid": "H2SO4", "กรดซัลฟิวริก": "H2SO4",
     # HCl
-    "T11-1002": "HCl", "Hydrochloric acid": "HCl", "กรดเกลือ": "HCl",
+    "T11-1001": "HCl", "Hydrochloric acid": "HCl", "กรดเกลือ": "HCl",
     # H2O2
     "T11-1004": "H2O2", "Hydrogen peroxide": "H2O2", "ไฮโดรเจน": "H2O2"
 }
@@ -109,7 +109,7 @@ def save_chem_batch(df, action_type):
             if raw_code in CHEMICAL_CONFIG:
                 code = raw_code
             else:
-                # 2. ลองหาใน Mapping (เทียบแบบ Case Insensitive)
+                # 2. ลองหาใน Mapping
                 found = False
                 for k, v in CHEM_MAPPING.items():
                     if k.lower() in raw_code.lower():
@@ -118,7 +118,7 @@ def save_chem_batch(df, action_type):
                         break
                 if not found:
                     unknown_codes.append(raw_code)
-                    continue # ข้ามรายการที่ไม่รู้จัก
+                    continue 
 
             kg = float(row['qty_kg'])
             date = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
@@ -139,7 +139,7 @@ def save_chem_batch(df, action_type):
         
         if unknown_codes:
             st.warning(f"⚠️ ข้ามรายการที่ไม่รู้จักชื่อสารเคมี: {list(set(unknown_codes))}")
-            st.info("💡 ชื่อที่ระบบรู้จัก: NaOH, H2SO4, HCl, H2O2 (หรือรหัส T11-...)")
+            st.info("💡 กรุณาเช็คชื่อในไฟล์ Excel ว่าตรงกับ: NaOH, H2SO4, HCl, H2O2 หรือ T11-xxxx")
             
         st.cache_data.clear()
     except Exception as e: st.error(f"❌ Error Chemical: {e}")
@@ -271,7 +271,7 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
 
 # --- 📊 Dashboard ---
 elif choice == "📊 Dashboard & แจ้งเตือน" and is_admin:
-    st.header("📊 Dashboard ภาพรวมสต็อก")
+    st.header("📊 Dashboard ภาพรวมสต็อก (Material)")
     if not balance_df.empty:
         today = get_thai_now().strftime('%Y-%m-%d')
         next_30 = (get_thai_now() + timedelta(days=30)).strftime('%Y-%m-%d')
@@ -355,13 +355,13 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
         daily_mat = df[df['date'] == date]
         if not daily_mat.empty:
             st.dataframe(daily_mat, use_container_width=True, hide_index=True)
-        else: st.info("ไม่มีรายการวันนี้")
+        else: st.info("ไม่มีรายการวัสดุวันนี้")
     st.subheader("2. สารเคมี (Chemical)")
     if not chem_df.empty:
         daily_chem = chem_df[chem_df['date'] == date]
         if not daily_chem.empty:
             st.dataframe(daily_chem, use_container_width=True, hide_index=True)
-        else: st.info("ไม่มีรายการวันนี้")
+        else: st.info("ไม่มีรายการสารเคมีวันนี้")
 
 # --- 📥 รับเข้า (In) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
@@ -377,9 +377,9 @@ elif choice == "📥 รับเข้า (In)" and is_admin:
         if 'Material' in sheet_names:
             st.subheader("📦 พบข้อมูล Material")
             d_mat = pd.read_excel(f, sheet_name='Material')
-            cmap = {'วันที่':'date', 'รหัสวัสดุ':'item_code', 'ชื่อรายการ':'item_name', 
-                    'จำนวน':'quantity', 'หน่วย':'unit', 'วันหมดอายุ':'expiry_date', 
-                    'ประเภท':'category', 'หมายเหตุ':'remark'}
+            cmap = {'วันที่รับเข้า':'date', 'รหัสวัสดุ':'item_code', 'คำอธิบาย':'item_name', 
+                    'จำนวน':'quantity', 'หน่วย':'unit', 'วันที่หมดอายุ':'expiry_date', 
+                    'ประเภทวัสดุ':'category', 'หมายเหตุ':'remark'}
             d_mat = d_mat.rename(columns=cmap)
             st.dataframe(d_mat.head(3))
             if st.button("✅ บันทึก Material", key="btn_mat_in"):
@@ -392,7 +392,8 @@ elif choice == "📥 รับเข้า (In)" and is_admin:
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
-            cmap_chem = {'วันที่':'date', 'รหัสสารเคมี':'chem_code', 'จำนวน KG':'qty_kg', 'หมายเหตุ':'remark'}
+            # แก้ไข Mapping ให้ตรงกับไฟล์จริง
+            cmap_chem = {'วันที่รับเข้า':'date', 'รหัสวัสดุ':'chem_code', 'จำนวน':'qty_kg', 'หมายเหตุ':'remark'}
             d_chem = d_chem.rename(columns=cmap_chem)
             st.dataframe(d_chem.head(3))
             if st.button("✅ บันทึก Chemical", key="btn_chem_in"):
@@ -411,9 +412,9 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
         if 'Material' in sheet_names:
             st.subheader("📦 พบข้อมูล Material (เบิกออก)")
             d_mat = pd.read_excel(f, sheet_name='Material')
-            cmap = {'วันที่':'date', 'รหัสวัสดุ':'item_code', 'ชื่อรายการ':'item_name', 
-                    'จำนวน':'quantity', 'หน่วย':'unit', 'แผนก':'department', 
-                    'ผู้เบิก':'requester', 'ประเภท':'category', 'หมายเหตุ':'remark'}
+            cmap = {'วันที่เบิกจ่าย':'date', 'รหัสวัสดุ':'item_code', 'คำอธิบาย':'item_name', 
+                    'จำนวนที่เบิก':'quantity', 'หน่วย':'unit', 'หน่วยงานที่เบิก':'department', 
+                    'ผู้ที่ทำการเบิก':'requester', 'ประเภทวัสดุ':'category', 'หมายเหตุ':'remark'}
             d_mat = d_mat.rename(columns=cmap)
             st.dataframe(d_mat.head(3))
             if st.button("✅ บันทึก Material (Out)", key="btn_mat_out"):
@@ -426,7 +427,8 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank (เบิกออก)")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
-            cmap_chem = {'วันที่':'date', 'รหัสสารเคมี':'chem_code', 'จำนวน KG':'qty_kg', 'หมายเหตุ':'remark'}
+            # แก้ไข Mapping ให้ตรงกับไฟล์จริง
+            cmap_chem = {'วันที่เบิกจ่าย':'date', 'รหัสวัสดุ':'chem_code', 'จำนวนที่เบิก':'qty_kg', 'หมายเหตุ':'remark'}
             d_chem = d_chem.rename(columns=cmap_chem)
             st.dataframe(d_chem.head(3))
             if st.button("✅ บันทึก Chemical (Out)", key="btn_chem_out"):
