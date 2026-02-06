@@ -11,27 +11,29 @@ import time
 st.set_page_config(page_title="Inventory & Chemical System", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 🔥 เปลี่ยนชื่อ DB เป็น v5 (ใช้รหัสวัสดุเป็นหลัก)
-DB_NAME = os.path.join(BASE_DIR, 'inventory_chem_v5.db')
+# 🔥 สร้าง DB ใหม่ v6 (รองรับรหัส T11-2005B)
+DB_NAME = os.path.join(BASE_DIR, 'inventory_chem_v6.db')
 
-# 🔥 เปลี่ยน Key หลักเป็น "รหัสวัสดุ (Material Code)" ตามที่ขอ
+# 🔥 ค่าคงที่สำหรับสารเคมี (Config)
+# ⚠️ เปลี่ยน T11-2005A -> T11-2005B ตามที่ขอ
 CHEMICAL_CONFIG = {
-    "T11-2005A":    {"capacity": 60000, "limit": 48000, "density": 1.48, "name": "Sodium hydroxide 45% (NaOH)"},
-    "T11-1002A":    {"capacity": 60000, "limit": 48000, "density": 1.40, "name": "Sulphuric acid 50% (H2SO4)"},
-    "T11-1001":     {"capacity": 60000, "limit": 48000, "density": 1.16, "name": "Hydrochloric acid 31.2% (HCL)"},
+    "T11-2005B":    {"capacity": 60000, "limit": 48000, "density": 1.52, "name": "Sodium hydroxide 45% (NaOH)"},
+    "T11-1002A":    {"capacity": 60000, "limit": 48000, "density": 1.84, "name": "Sulphuric acid 50% (H2SO4)"},
+    "T11-1001":     {"capacity": 60000, "limit": 48000, "density": 1.18, "name": "Hydrochloric acid 31.2% (HCL)"},
     "T11-9007B102": {"capacity": 30000, "limit": 24000, "density": 1.20, "name": "Hydrogen Peroxide (ไฮโดรเจนเปอร์ออกไซด์ 50%)"}
 }
 
-# 🔥 ตารางเทียบชื่อ (Mapping) แปลงชื่ออื่นให้เข้าสู่รหัส T11-...
+# 🔥 ตารางเทียบชื่อสารเคมี (Mapping)
+# เพิ่ม T11-2005A ให้ชี้ไปที่ T11-2005B (เผื่อไฟล์ Excel ยังเป็นรหัสเก่า)
 CHEM_MAPPING = {
-    # NaOH -> T11-2005A
-    "NaOH": "T11-2005A", "Sodium hydroxide": "T11-2005A", "โซดาไฟ": "T11-2005A", "T11-2005": "T11-2005A",
-    # H2SO4 -> T11-1002A
-    "H2SO4": "T11-1002A", "Sulfuric acid": "T11-1002A", "กรดซัลฟิวริก": "T11-1002A", "T11-1002": "T11-1002A", "T11-1003": "T11-1002A",
-    # HCl -> T11-1001
-    "HCl": "T11-1001", "Hydrochloric acid": "T11-1001", "กรดเกลือ": "T11-1001",
-    # H2O2 -> T11-9007B102
-    "H2O2": "T11-9007B102", "Hydrogen peroxide": "T11-9007B102", "ไฮโดรเจน": "T11-9007B102", "T11-1004": "T11-9007B102", "T11-1004A": "T11-9007B102"
+    # NaOH (Map เข้า T11-2005B)
+    "T11-2005A": "T11-2005B", "T11-2005": "T11-2005B", "Sodium hydroxide": "T11-2005B", "โซดาไฟ": "T11-2005B", "NaOH": "T11-2005B",
+    # H2SO4
+    "T11-1002A": "T11-1002A", "T11-1002": "T11-1002A", "T11-1003": "T11-1002A", "Sulfuric acid": "T11-1002A", "กรดซัลฟิวริก": "T11-1002A", "H2SO4": "T11-1002A",
+    # HCl
+    "T11-1001": "T11-1001", "Hydrochloric acid": "T11-1001", "กรดเกลือ": "T11-1001", "HCl": "T11-1001",
+    # H2O2
+    "T11-9007B102": "T11-9007B102", "T11-1004": "T11-9007B102", "T11-1004A": "T11-9007B102", "Hydrogen peroxide": "T11-9007B102", "ไฮโดรเจน": "T11-9007B102", "H2O2": "T11-9007B102"
 }
 
 def get_thai_now():
@@ -109,12 +111,12 @@ def save_chem_batch(df, action_type):
         for _, row in df.iterrows():
             raw_code = str(row['r_code']).strip()
             
-            # 1. เช็คว่าเป็นรหัส T11... ที่ถูกต้องเลยหรือไม่
+            # 1. เช็ค Config
             code = None
             if raw_code in CHEMICAL_CONFIG:
                 code = raw_code
             else:
-                # 2. ถ้าไม่ใช่ ลองหาใน Mapping (เช่น NaOH -> T11-2005A)
+                # 2. เช็ค Mapping (แปลงรหัสเก่า/ชื่อ เป็นรหัสใหม่)
                 for k, v in CHEM_MAPPING.items():
                     if k.lower() in raw_code.lower():
                         code = v
@@ -127,7 +129,7 @@ def save_chem_batch(df, action_type):
             kg = float(row['qty_kg'])
             date = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
             
-            # ดึงคำอธิบาย (ถ้ามี) หรือใช้ค่า Default จาก Config
+            # ดึงคำอธิบาย
             chem_desc = str(row.get('chem_desc', ''))
             if chem_desc.lower() == 'nan' or not chem_desc: 
                 chem_desc = CHEMICAL_CONFIG[code]['name']
@@ -149,7 +151,7 @@ def save_chem_batch(df, action_type):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', records)
             conn.commit()
-            st.success(f"✅ บันทึกสารเคมี (Chemical) เรียบร้อย! ({len(records)} รายการ)")
+            st.success(f"✅ บันทึกถังบรรจุสารเคมี (Chemical Tank) เรียบร้อย! ({len(records)} รายการ)")
         
         if unknown_codes:
             st.warning(f"⚠️ พบรายการสารเคมีที่ไม่รู้จัก: {list(set(unknown_codes))}")
@@ -266,20 +268,19 @@ chem_bal = calculate_chem_balance(chem_df)
 # 3. ส่วนเนื้อหา (Content)
 # ==========================================
 
-# --- 🧪 สารเคมี (Chemical Tank) - เฉพาะ Admin ---
+# --- 🧪 ถังบรรจุสารเคมี (Chemical Tank) - เฉพาะ Admin ---
 if choice == "🧪 ระบบจัดการสารเคมี (Chemical Tanks)" and is_admin:
     st.header("🧪 ระบบจัดการสารเคมี (Chemical Tank Management)")
     
     st.subheader("📊 สถานะถังเก็บปัจจุบัน")
     cols = st.columns(4)
-    # แสดงตาม KEY (ที่เป็นรหัส T11-...)
+    # แสดงตาม Config (ใช้รหัสวัสดุเป็นหัวข้อ)
     for i, (code, conf) in enumerate(CHEMICAL_CONFIG.items()):
         current_kg = chem_bal.get(code, 0)
         current_l = current_kg / conf['density']
         percent = (current_kg / conf['limit']) * 100
         with cols[i]:
-            # 🔥 แสดงรหัสวัสดุ (T11-xxxx) เป็นหัวข้อ
-            st.markdown(f"#### {code}")
+            st.markdown(f"#### {code}") # <--- แสดงรหัสวัสดุ เช่น T11-2005B
             st.caption(conf['name'])
             
             safe_pct = max(0.0, min(percent/100, 1.0))
@@ -296,12 +297,15 @@ if choice == "🧪 ระบบจัดการสารเคมี (Chemical
         csv = chem_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 ดาวน์โหลดประวัติ (CSV)", csv, "chem_history.csv", "text/csv")
         
+        # 🔥 เลือกเฉพาะคอลัมน์ที่ต้องการ (ตัด ID ออก)
+        disp_cols = ['date', 'chem_code', 'chem_desc', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']
+        
         st.dataframe(
-            chem_df[['date', 'chem_code', 'chem_desc', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']], 
+            chem_df[disp_cols], 
             use_container_width=True, 
             hide_index=True,
             column_config={
-                "chem_code": "รหัสวัสดุ", # เปลี่ยนหัวตาราง
+                "chem_code": "รหัสวัสดุ", 
                 "qty_kg": st.column_config.NumberColumn("จำนวน (KG)", format="%.2f"),
                 "qty_l": st.column_config.NumberColumn("จำนวน (L)", format="%.2f"),
                 "department": "แผนก",
@@ -391,20 +395,21 @@ elif choice == "🔍 ค้นหา (Search)":
 
 # --- 📅 รายงานประจำวัน ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
-    st.header("📅 รายงานประจำวัน (รวม Material & Chemical Tank)")
+    st.header("📅 รายงานประจำวัน (รวม Material & Chemical)")
     date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
     
-    st.subheader("1. วัสดุ (Material)")
+    st.subheader("1. วัสดุทั่ว (Material)")
     if not df.empty:
         daily_mat = df[df['date'] == date]
         if not daily_mat.empty:
             st.dataframe(daily_mat, use_container_width=True, hide_index=True)
         else: st.info("ไม่มีรายการวัสดุวันนี้")
     
-    st.subheader("2. ถังบรรจุสารเคมี (Chemical Tank)")
+    st.subheader("2. ถังบรรจุสารเคมี (Chemical)")
     if not chem_df.empty:
         daily_chem = chem_df[chem_df['date'] == date]
         if not daily_chem.empty:
+            # 🔥 เลือกคอลัมน์และตัด ID ออก
             st.dataframe(
                 daily_chem[['date', 'chem_code', 'chem_desc', 'action_type', 'qty_kg', 'qty_l', 'department', 'requester']],
                 use_container_width=True, hide_index=True,
