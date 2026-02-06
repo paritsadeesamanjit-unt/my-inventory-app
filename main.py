@@ -355,7 +355,7 @@ elif choice == "📋 วัสดุทั้งหมด (Overview)":
 
 # --- 📉 วัสดุหมดสต๊อก ---
 elif choice == "📉 วัสดุหมดสต๊อก (Out of Stock)":
-    st.header("📉 รายงานวัสดุที่ถูกเบิกจ่ายหมดแล้ว (Balance ≤ 0)")
+    st.header("📉 รายงานวัสดุที่ถูกเบิกจ่ายหมดแล้ว")
     if not balance_df.empty:
         out = balance_df[balance_df['Balance'] <= 0]
         if not out.empty:
@@ -393,14 +393,14 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
     st.header("📅 รายงานประจำวัน (รวม Material & Chemical)")
     date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
     
-    st.subheader("1. วัสดุทั่วไป (Material)")
+    st.subheader("1. วัสดุ (Material)")
     if not df.empty:
         daily_mat = df[df['date'] == date]
         if not daily_mat.empty:
             st.dataframe(daily_mat, use_container_width=True, hide_index=True)
         else: st.info("ไม่มีรายการวัสดุวันนี้")
     
-    st.subheader("2. สารเคมี (Chemical)")
+    st.subheader("2. ถังบรรจุสารเคมี (Chemical Tank)")
     if not chem_df.empty:
         daily_chem = chem_df[chem_df['date'] == date]
         if not daily_chem.empty:
@@ -410,7 +410,7 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
                 use_container_width=True, hide_index=True,
                 column_config={"qty_kg": st.column_config.NumberColumn("KG", format="%.2f"), "qty_l": st.column_config.NumberColumn("L", format="%.2f"), "chem_desc": "คำอธิบาย"}
             )
-        else: st.info("ไม่มีรายการสารเคมีวันนี้")
+        else: st.info("ไม่มีรายการถังบรรจุสารเคมีวันนี้")
 
 # --- 📥 รับเข้า (In) ---
 elif choice == "📥 รับเข้า (In)" and is_admin:
@@ -437,7 +437,7 @@ elif choice == "📥 รับเข้า (In)" and is_admin:
                     if c not in d_mat.columns: d_mat[c] = None
                 save_to_db(d_mat[req], 'In')
         
-        # 2. Chemical
+        # 2. Chemical Tank
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
@@ -472,7 +472,7 @@ elif choice == "📤 เบิกออก (Out)" and is_admin:
                     if c not in d_mat.columns: d_mat[c] = None
                 save_to_db(d_mat[req], 'Out')
         
-        # 2. Chemical
+        # 2. Chemical Tank
         if 'Chemical Tank' in sheet_names:
             st.subheader("🧪 พบข้อมูล Chemical Tank (เบิกออก)")
             d_chem = pd.read_excel(f, sheet_name='Chemical Tank')
