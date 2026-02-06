@@ -391,7 +391,7 @@ elif choice == "🔍 ค้นหา (Search)":
 
 # --- 📅 รายงานประจำวัน ---
 elif choice == "📅 รายงานประจำวัน (Daily)" and is_admin:
-    st.header("📅 รายงานประจำวัน (รวม Material & Chemical)")
+    st.header("📅 รายงานประจำวัน (รวม Material & Chemical Tank)")
     date = st.date_input("เลือกวันที่:", get_thai_now()).strftime('%Y-%m-%d')
     
     st.subheader("1. วัสดุ (Material)")
@@ -401,7 +401,7 @@ elif choice == "📅 รายงานประจำวัน (Daily)" and is_
             st.dataframe(daily_mat, use_container_width=True, hide_index=True)
         else: st.info("ไม่มีรายการวัสดุวันนี้")
     
-    st.subheader("2. สารเคมี (Chemical Tank)")
+    st.subheader("2. ถังบรรจุสารเคมี (Chemical Tank)")
     if not chem_df.empty:
         daily_chem = chem_df[chem_df['date'] == date]
         if not daily_chem.empty:
